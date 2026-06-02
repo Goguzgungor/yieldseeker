@@ -30,6 +30,12 @@ const BLUE = "#2b4cff";
 const DIM = "#5a5a5e";
 const GREY_DOT = "#b8b8bc";
 
+// Deterministic radial layout (graph units). Pools sit on a ring of POOL_RADIUS
+// around the pinned agent; dust fills a slightly larger disc so zoom-to-fit
+// frames a stable, spacious extent.
+const POOL_RADIUS = 90;
+const DUST_RADIUS = 150;
+
 export type GraphNode = {
   id: string;
   kind: "agent" | "pool" | "dust";
@@ -62,19 +68,20 @@ interface Props {
 // Deterministic faint dot-cloud (Giza texture) generated once per canvas size.
 // Nodes are fixed so the simulation never moves them; coordinates span the full
 // canvas in graph-space (centred on 0,0 like d3-force).
-function makeDust(count: number, w: number, h: number): GraphNode[] {
+function makeDust(count: number, radius: number): GraphNode[] {
   const dust: GraphNode[] = [];
   let seed = 1337;
   const rand = () => {
     seed = (seed * 1664525 + 1013904223) % 4294967296;
     return seed / 4294967296;
   };
-  // spread over 90 % of the canvas so the edges stay clean
-  const rx = (w / 2) * 0.9;
-  const ry = (h / 2) * 0.9;
+  // Distribute in a disc (sqrt → uniform area) centred on 0,0 in GRAPH units,
+  // bounded near the pool ring so zoom-to-fit frames a sensible extent.
   for (let i = 0; i < count; i++) {
-    const fx = (rand() - 0.5) * 2 * rx;
-    const fy = (rand() - 0.5) * 2 * ry;
+    const r = Math.sqrt(rand()) * radius;
+    const a = rand() * Math.PI * 2;
+    const fx = Math.cos(a) * r;
+    const fy = Math.sin(a) * r;
     dust.push({ id: `dust-${i}`, kind: "dust", fx, fy, x: fx, y: fy });
   }
   return dust;
@@ -152,12 +159,8 @@ export default function NetworkGraph({
   }, []);
 
   // Dust spread to full canvas area (in graph coords centred on 0,0).
-  const dust = useMemo(
-    () => makeDust(200, dims.w || 800, dims.h || 600),
-    // Regenerate only when the canvas size changes meaningfully (>10 px).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [Math.round((dims.w || 800) / 10), Math.round((dims.h || 600) / 10)],
-  );
+  // Dust lives in fixed graph-space (independent of canvas px) → stable framing.
+  const dust = useMemo(() => makeDust(160, DUST_RADIUS), []);
 
   const { nodes, links } = useMemo(() => {
     // Best eligible pool by APY (matches backend bestPool()).
@@ -182,14 +185,26 @@ export default function NetworkGraph({
       x: 0,
       y: 0,
     };
-    const poolNodes: GraphNode[] = pools.map((p) => ({
-      id: p.poolId,
-      kind: "pool",
-      label: poolPillLabel(p.name, p.poolId),
-      pool: p,
-      best: best?.poolId === p.poolId,
-      chosen: highlightId === p.poolId,
-    }));
+    // Pin pools at fixed radial positions around the centre (deterministic
+    // "spokes" — far more reliable than force physics for a handful of nodes).
+    const count = Math.max(pools.length, 1);
+    const poolNodes: GraphNode[] = pools.map((p, i) => {
+      const ang = -Math.PI / 2 + (i * 2 * Math.PI) / count;
+      const fx = Math.cos(ang) * POOL_RADIUS;
+      const fy = Math.sin(ang) * POOL_RADIUS;
+      return {
+        id: p.poolId,
+        kind: "pool" as const,
+        label: poolPillLabel(p.name, p.poolId),
+        pool: p,
+        best: best?.poolId === p.poolId,
+        chosen: highlightId === p.poolId,
+        fx,
+        fy,
+        x: fx,
+        y: fy,
+      };
+    });
     const poolLinks: GraphLink[] = pools.map((p) => ({
       source: "__agent__",
       target: p.poolId,
@@ -209,36 +224,14 @@ export default function NetworkGraph({
     const fg = fgRef.current;
     if (!fg) return;
     try {
-      // Strong repulsion so nodes spread far apart.
-      fg.d3Force("charge")?.strength(-800).distanceMax(600);
-      // Long, medium-strength links so pools orbit well away from centre.
-      fg.d3Force("link")?.distance(200).strength(0.5);
-      // Gentle centre pull to keep the layout roughly composed.
+      // Every node is pinned (fx/fy) → positions are deterministic. Neutralise
+      // the default forces so nothing nudges the layout or jitters.
+      fg.d3Force("charge")?.strength(0);
+      fg.d3Force("link")?.distance(0).strength(0);
       const center = fg.d3Force("center");
-      if (center) center.strength(0.02);
-      // Collision force: prevent pool pills from overlapping each other.
-      // We approximate collision radius from the longest label to be safe.
-      if (_forceCollide) {
-        const maxLabel = pools.reduce(
-          (best, p) => {
-            const lbl = poolPillLabel(p.name, p.poolId);
-            return lbl.length > best.length ? lbl : best;
-          },
-          "BLEND · XXXXXXXXXX",
-        );
-        // Rough px-per-char for 3.4px mono font in graph units ≈ 2.1
-        const approxHalf = (maxLabel.length * 2.1 + 10) / 2 + 8;
-        fg.d3Force(
-          "collision",
-          _forceCollide((n: GraphNode) => {
-            if (n.kind === "dust") return 0; // dust participates in nothing
-            if (n.kind === "agent") return 18; // slightly larger than the ring
-            return approxHalf;
-          }),
-        );
-      }
-      fg.d3VelocityDecay(0.4);
-      fg.d3AlphaDecay(0.025);
+      if (center) center.strength(0);
+      fg.d3VelocityDecay(0.6);
+      void _forceCollide;
     } catch {
       /* force accessors differ across builds; non-fatal */
     }
@@ -254,7 +247,7 @@ export default function NetworkGraph({
     const fg = fgRef.current;
     if (!fg) return;
     try {
-      fg.zoomToFit(600, 90);
+      fg.zoomToFit(500, 60);
     } catch {
       /* non-fatal if graph isn't ready */
     }
@@ -264,10 +257,10 @@ export default function NetworkGraph({
   // but we also want to re-fit after layout has settled in the new canvas).
   useEffect(() => {
     if (dims.w > 0 && dims.h > 0) {
-      const t = setTimeout(zoomToFit, 800);
+      const t = setTimeout(zoomToFit, 500);
       return () => clearTimeout(t);
     }
-  }, [dims, zoomToFit]);
+  }, [dims, nodes.length, zoomToFit]);
 
   // Reheat layout when pool set changes.
   useEffect(() => {
@@ -381,10 +374,10 @@ export default function NetworkGraph({
               ctx.textBaseline = "top";
               ctx.font = "500 2.8px var(--font-plex-mono, monospace)";
               ctx.fillStyle = "#9a9aa0";
-              ctx.fillText("YIELDSEEKER AGENT", x, y + 16);
+              ctx.fillText("YIELDSEEKER AGENT", x, y + 20);
               ctx.font = "700 3.8px var(--font-plex-mono, monospace)";
               ctx.fillStyle = INK;
-              ctx.fillText(n.label ?? "", x, y + 21);
+              ctx.fillText(n.label ?? "", x, y + 25);
               return;
             }
 
