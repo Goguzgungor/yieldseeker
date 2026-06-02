@@ -45,4 +45,21 @@ describe("parseConfig", () => {
   it("throws when required keys are missing", () => {
     expect(() => parseConfig({})).toThrow();
   });
+
+  it("defaults DeFindex strategies to an empty list when omitted", () => {
+    const c = parseConfig(env);
+    expect(c.scanDefindexStrategies).toEqual([]);
+  });
+
+  it("parses DeFindex strategies from JSON and converts fallback TVL to stroops", () => {
+    const c = parseConfig({
+      ...env,
+      SCAN_DEFINDEX_STRATEGIES: JSON.stringify([
+        { strategyId: "C_STRAT", blendPoolId: "C_A", name: "DeFindex USDC", fallbackTvlUsdc: 1000 },
+      ]),
+    });
+    expect(c.scanDefindexStrategies).toEqual([
+      { strategyId: "C_STRAT", blendPoolId: "C_A", name: "DeFindex USDC", fallbackTvlUsdc: 1000_0000000n },
+    ]);
+  });
 });

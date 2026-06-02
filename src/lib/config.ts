@@ -17,6 +17,8 @@ const Schema = z.object({
   // mainnet.contracts.json (poolFactoryV2 / backstopV2).
   SCAN_POOL_FACTORY_ID: z.string().min(1).default("CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU"),
   SCAN_BACKSTOP_ID: z.string().min(1).default("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"),
+  // DeFindex (mainnet, scan-only). JSON array; empty/omitted => disabled.
+  SCAN_DEFINDEX_STRATEGIES: z.string().default("[]"),
 
   // ── Exec side = TESTNET (real tx, no real money) ──────────────────────────
   EXEC_RPC_URL: z.string().url(),
@@ -34,10 +36,32 @@ const Schema = z.object({
   SCAN_INTERVAL_SEC: z.coerce.number().positive(),
 });
 
+const DefindexStrategySchema = z.object({
+  strategyId: z.string().min(1),
+  blendPoolId: z.string().min(1),
+  name: z.string().min(1),
+  fallbackTvlUsdc: z.coerce.number().nonnegative().default(0),
+});
+export interface DefindexStrategyConfig {
+  strategyId: string;
+  blendPoolId: string;
+  name: string;
+  fallbackTvlUsdc: bigint;
+}
+
 const toStroops = (usdc: number) => BigInt(Math.round(usdc * 1e7));
 
 export function parseConfig(env: Record<string, string | undefined>) {
   const e = Schema.parse(env);
+  const defindexStrategies = z
+    .array(DefindexStrategySchema)
+    .parse(JSON.parse(e.SCAN_DEFINDEX_STRATEGIES))
+    .map((s) => ({
+      strategyId: s.strategyId,
+      blendPoolId: s.blendPoolId,
+      name: s.name,
+      fallbackTvlUsdc: toStroops(s.fallbackTvlUsdc),
+    }));
   return {
     // LLM
     anthropicApiKey: e.ANTHROPIC_API_KEY,
@@ -50,6 +74,7 @@ export function parseConfig(env: Record<string, string | undefined>) {
     scanUsdcContractId: e.SCAN_USDC_CONTRACT_ID,
     scanPoolFactoryId: e.SCAN_POOL_FACTORY_ID,
     scanBackstopId: e.SCAN_BACKSTOP_ID,
+    scanDefindexStrategies: defindexStrategies,
     // Exec (testnet)
     execRpcUrl: e.EXEC_RPC_URL,
     execNetworkPassphrase: e.EXEC_NETWORK_PASSPHRASE,
