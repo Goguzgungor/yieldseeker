@@ -1,6 +1,16 @@
 import Database from "better-sqlite3";
-import type { Position, UserRegistration } from "./types";
+import type { Position } from "./types";
 
+/**
+ * SQLite-backed state for the SHARED agent (the single legacy position, the
+ * activity log, the rebalance ledger, and the cross-instance KV cache used for
+ * scan snapshots / decisions / pool discovery).
+ *
+ * NOTE: the PER-USER registry (users + positions) deliberately does NOT live
+ * here anymore — it is held in an in-memory `globalThis` store (see
+ * `src/lib/registry.ts`) so each demo run / explicit reset re-shows the
+ * Freighter onboarding. The legacy `users` / `positions` tables were removed.
+ */
 export function createDb(path = "yieldseeker.sqlite") {
   const db = new Database(path);
   db.exec(`
@@ -8,20 +18,6 @@ export function createDb(path = "yieldseeker.sqlite") {
     CREATE TABLE IF NOT EXISTS activity (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, kind TEXT, message TEXT, meta TEXT);
     CREATE TABLE IF NOT EXISTS rebalances (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, amount TEXT);
     CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-    -- Per-user smart-account registry (ARMA model): one row per onboarded user.
-    CREATE TABLE IF NOT EXISTS users (
-      owner       TEXT PRIMARY KEY,
-      smartWallet TEXT NOT NULL,
-      poolRuleId  INTEGER NOT NULL,
-      usdcRuleId  INTEGER NOT NULL,
-      createdAt   INTEGER NOT NULL
-    );
-    -- Per-user position, keyed by the smart wallet contract id.
-    CREATE TABLE IF NOT EXISTS positions (
-      smartWallet TEXT PRIMARY KEY,
-      poolId      TEXT,
-      amount      TEXT NOT NULL
-    );
   `);
 
   return {
@@ -67,58 +63,9 @@ export function createDb(path = "yieldseeker.sqlite") {
     },
 
     // ── Per-user smart-account registry (ARMA model) ────────────────────────
-    /**
-     * Register (or upsert) a user's smart account + the two agent context-rule
-     * ids. `owner` is the primary key, so re-registering the same owner updates
-     * its wallet/rule ids in place. `createdAt` defaults to now (epoch seconds).
-     */
-    registerUser(u: UserRegistration): void {
-      db.prepare(
-        `INSERT INTO users (owner, smartWallet, poolRuleId, usdcRuleId, createdAt)
-         VALUES (?,?,?,?,?)
-         ON CONFLICT(owner) DO UPDATE SET
-           smartWallet=excluded.smartWallet,
-           poolRuleId=excluded.poolRuleId,
-           usdcRuleId=excluded.usdcRuleId`,
-      ).run(u.owner, u.smartWallet, u.poolRuleId, u.usdcRuleId, u.createdAt);
-    },
-    /** All registered users, oldest first (deterministic loop order). */
-    listUsers(): UserRegistration[] {
-      const rows = db
-        .prepare(
-          `SELECT owner, smartWallet, poolRuleId, usdcRuleId, createdAt
-           FROM users ORDER BY createdAt ASC, owner ASC`,
-        )
-        .all() as UserRegistration[];
-      return rows;
-    },
-    /** Look up one user by owner G-address, or null if not registered. */
-    getUser(owner: string): UserRegistration | null {
-      const row = db
-        .prepare(
-          `SELECT owner, smartWallet, poolRuleId, usdcRuleId, createdAt
-           FROM users WHERE owner=?`,
-        )
-        .get(owner) as UserRegistration | undefined;
-      return row ?? null;
-    },
-
-    // ── Per-user positions (keyed by smart wallet) ──────────────────────────
-    /** Persist the position for a specific smart wallet (upsert). */
-    setUserPosition(smartWallet: string, p: Position): void {
-      db.prepare(
-        `INSERT INTO positions (smartWallet, poolId, amount) VALUES (?,?,?)
-         ON CONFLICT(smartWallet) DO UPDATE SET poolId=excluded.poolId, amount=excluded.amount`,
-      ).run(smartWallet, p.poolId, p.amountUsdc.toString());
-    },
-    /** Read a smart wallet's position; idle (null pool, 0) if none stored. */
-    getUserPosition(smartWallet: string): Position {
-      const row = db
-        .prepare(`SELECT poolId, amount FROM positions WHERE smartWallet=?`)
-        .get(smartWallet) as { poolId: string | null; amount: string } | undefined;
-      if (!row) return { poolId: null, amountUsdc: 0n };
-      return { poolId: row.poolId, amountUsdc: BigInt(row.amount) };
-    },
+    // MOVED OUT of SQLite into the in-memory `globalThis` store — see
+    // `src/lib/registry.ts`. Kept in-memory so each demo run / explicit reset
+    // re-shows the Freighter onboarding (a file-backed table would persist it).
   };
 }
 export type Db = ReturnType<typeof createDb>;

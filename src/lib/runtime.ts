@@ -11,6 +11,7 @@ import {
 import { z } from "zod";
 import { parseConfig, type Config } from "./config";
 import { createDb, type Db } from "./db";
+import * as registry from "./registry";
 import { createBlendReader, createBlendSource, scanSource } from "./scanner";
 import { createDefindexSource } from "./defindex";
 import { createBlendOnchainPoolSource, createPoolDiscovery, isDiscoveryCacheFresh, DISCOVERY_TTL_MS, type PoolDiscovery } from "./discovery";
@@ -288,11 +289,11 @@ async function tick(rt: Runtime): Promise<void> {
       const chosenPoolId = rt.lastDecision?.chosenPoolId ?? null;
       const result = await runPerUserExecution(
         {
-          users: rt.db.listUsers(),
+          users: registry.listUsers(),
           execPoolId: rt.cfg.execPoolId,
           supplyForUser: (user, amount) => supplyForUser(rt, user, amount),
-          getUserPosition: (sw) => rt.db.getUserPosition(sw),
-          setUserPosition: (sw, p) => rt.db.setUserPosition(sw, p),
+          getUserPosition: (sw) => registry.getUserPosition(sw),
+          setUserPosition: (sw, p) => registry.setUserPosition(sw, p),
           idleUsdcForUser: (user) => readUsdcBalance(rt, user.smartWallet),
           log: (k, m, meta) => rt.db.log(k, m, meta),
           perTxCapStroops: rt.cfg.perTxCapStroops,
@@ -353,6 +354,15 @@ export async function startLoop(): Promise<void> {
   const rt = getRuntime();
   if (rt.loopStarted) return;
   rt.loopStarted = true;
+
+  // Diagnostic for the globalThis-sharing probe: record the registry store id
+  // THIS (loop) module instance sees. A route handler's `GET /api/reset` reports
+  // its own store id; matching ids prove the in-memory registry is shared across
+  // the loop↔route boundary (see src/lib/registry.ts).
+  rt.db.log("registry", `loop registry store id = ${registry.registryStoreId()}`, {
+    storeId: registry.registryStoreId(),
+    pid: process.pid,
+  });
 
   const cached = readDiscoveryCache(rt);
 
@@ -445,14 +455,16 @@ export type RegisterInputT = z.infer<typeof RegisterInput>;
 /** Register (upsert) a user's smart account + agent rule ids; returns the row. */
 export function registerUser(input: RegisterInputT): UserRegistration {
   const rt = getRuntime();
+  // Preserve the original createdAt on re-register so loop ordering is stable.
+  const existing = registry.getUser(input.owner);
   const reg: UserRegistration = {
     owner: input.owner,
     smartWallet: input.smartWallet,
     poolRuleId: input.poolRuleId,
     usdcRuleId: input.usdcRuleId,
-    createdAt: Math.floor(Date.now() / 1000),
+    createdAt: existing?.createdAt ?? Math.floor(Date.now() / 1000),
   };
-  rt.db.registerUser(reg);
+  registry.registerUser(reg);
   rt.db.log("register", `registered user ${reg.owner.slice(0, 8)}… → SA ${reg.smartWallet}`, {
     smartWallet: reg.smartWallet,
     poolRuleId: reg.poolRuleId,
@@ -463,10 +475,9 @@ export function registerUser(input: RegisterInputT): UserRegistration {
 
 /** All registered users, each with their current per-user position (serialized). */
 export function listUsers(): Array<UserRegistration & { position: SerializedPosition }> {
-  const rt = getRuntime();
-  return rt.db.listUsers().map((u) => ({
+  return registry.listUsers().map((u) => ({
     ...u,
-    position: serializePosition(rt.db.getUserPosition(u.smartWallet)),
+    position: serializePosition(registry.getUserPosition(u.smartWallet)),
   }));
 }
 
@@ -474,10 +485,43 @@ export function listUsers(): Array<UserRegistration & { position: SerializedPosi
 export function getUserWithPosition(
   owner: string,
 ): (UserRegistration & { position: SerializedPosition }) | null {
-  const rt = getRuntime();
-  const u = rt.db.getUser(owner);
+  const u = registry.getUser(owner);
   if (!u) return null;
-  return { ...u, position: serializePosition(rt.db.getUserPosition(u.smartWallet)) };
+  return { ...u, position: serializePosition(registry.getUserPosition(u.smartWallet)) };
+}
+
+/**
+ * Remove ONE user from the in-memory registry (the demo "disconnect this user"
+ * affordance), so the onboarding re-appears for that owner. Returns true if the
+ * owner was registered. Logs the removal for the activity ticker.
+ */
+export function unregisterUser(owner: string): boolean {
+  const rt = getRuntime();
+  const removed = registry.removeUser(owner);
+  if (removed) {
+    rt.db.log("reset", `unregistered user ${owner.slice(0, 8)}… (demo reset)`, { owner });
+  }
+  return removed;
+}
+
+/**
+ * Clear the ENTIRE in-memory registry (all users + positions) so the whole demo
+ * can be re-run without a server restart. Returns the number of users removed.
+ */
+export function resetRegistry(): number {
+  const rt = getRuntime();
+  const removed = registry.clearRegistry();
+  rt.db.log("reset", `cleared registry — ${removed} user(s) removed (demo reset)`, { removed });
+  return removed;
+}
+
+/**
+ * Diagnostic accessor: the live `globalThis` registry store id, used by the
+ * sharing probe to confirm the loop and the route handlers point at the SAME
+ * in-process store. See `src/lib/registry.ts`.
+ */
+export function registryStoreId(): string {
+  return registry.registryStoreId();
 }
 
 /** Shape returned by `/api/scan`. */

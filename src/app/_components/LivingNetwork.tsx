@@ -202,6 +202,12 @@ export default function LivingNetwork() {
             wallet={wallet}
             registered={!!onboarding.registered}
             onOpenAccount={() => setOnboardOpen(true)}
+            onDisconnect={() => {
+              // Disconnecting a registered wallet also clears its in-memory demo
+              // registration, so reconnecting re-shows the onboarding (demo reset).
+              if (onboarding.registered) void onboarding.resetDemo();
+              wallet.disconnect();
+            }}
           />
 
           <button
@@ -272,10 +278,12 @@ function WalletButton({
   wallet,
   registered,
   onOpenAccount,
+  onDisconnect,
 }: {
   wallet: ReturnType<typeof useFreighter>;
   registered: boolean;
   onOpenAccount: () => void;
+  onDisconnect: () => void;
 }) {
   if (wallet.installed === false) {
     return (
@@ -319,9 +327,9 @@ function WalletButton({
         </button>
         <button
           style={styles.walletDisconnect}
-          onClick={wallet.disconnect}
+          onClick={onDisconnect}
           aria-label="Disconnect wallet"
-          title="Disconnect"
+          title={registered ? "Disconnect (resets the demo for this wallet)" : "Disconnect"}
         >
           ✕
         </button>
