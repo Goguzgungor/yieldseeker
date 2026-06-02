@@ -3,20 +3,37 @@ import { parseConfig } from "./config.js";
 
 const env = {
   ANTHROPIC_API_KEY: "k", ANTHROPIC_MODEL: "claude-sonnet-4-6",
-  STELLAR_RPC_URL: "https://soroban-testnet.stellar.org",
-  STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
-  USDC_CONTRACT_ID: "C_USDC", BLEND_POOL_IDS: "C_A,C_B",
+  RISK_TOLERANCE: "balanced",
+  // Scan side (mainnet)
+  SCAN_RPC_URL: "https://mainnet.sorobanrpc.com",
+  SCAN_NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015",
+  SCAN_BLEND_POOL_IDS: "C_A,C_B",
+  SCAN_USDC_CONTRACT_ID: "C_USDC_MAINNET",
+  // Exec side (testnet)
+  EXEC_RPC_URL: "https://soroban-testnet.stellar.org",
+  EXEC_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
+  EXEC_POOL_ID: "C_EXEC_POOL",
+  EXEC_USDC_CONTRACT_ID: "C_USDC_TESTNET",
   AGENT_SIGNER_SECRET: "S_SECRET", SMART_WALLET_ADDRESS: "C_WALLET",
   PER_TX_CAP_USDC: "2000", DAILY_CAP_USDC: "5000",
   MIN_YIELD_DELTA_BPS: "50", REBALANCE_COOLDOWN_SEC: "120", SCAN_INTERVAL_SEC: "30",
 };
 
 describe("parseConfig", () => {
-  it("parses pool ids into an array and caps into stroop bigints", () => {
+  it("parses scan pool ids into an array and caps into stroop bigints", () => {
     const c = parseConfig(env);
-    expect(c.blendPoolIds).toEqual(["C_A", "C_B"]);
+    expect(c.scanBlendPoolIds).toEqual(["C_A", "C_B"]);
     expect(c.perTxCapStroops).toBe(2000_0000000n);
     expect(c.minYieldDeltaBps).toBe(50);
+  });
+
+  it("separates scan (mainnet) and exec (testnet) config", () => {
+    const c = parseConfig(env);
+    expect(c.scanRpcUrl).toBe("https://mainnet.sorobanrpc.com");
+    expect(c.scanUsdcContractId).toBe("C_USDC_MAINNET");
+    expect(c.execRpcUrl).toBe("https://soroban-testnet.stellar.org");
+    expect(c.execPoolId).toBe("C_EXEC_POOL");
+    expect(c.execUsdcContractId).toBe("C_USDC_TESTNET");
   });
 
   it("throws when required keys are missing", () => {

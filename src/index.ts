@@ -12,9 +12,18 @@ import { createApi, type SharedState } from "./api.js";
 async function main() {
   const cfg = parseConfig(process.env);
   const db = createDb("yieldseeker.sqlite");
-  const reader = createBlendReader(cfg.rpcUrl, cfg.networkPassphrase);
-  const wallet = createKeypairWallet(Keypair.fromSecret(cfg.agentSignerSecret), cfg.networkPassphrase); // swap to policy-signer wallet when ready
-  const soroban = createSorobanClient({ rpcUrl: cfg.rpcUrl, networkPassphrase: cfg.networkPassphrase, walletAddress: cfg.smartWalletAddress, usdcId: cfg.usdcContractId });
+
+  // Scan side: mainnet reader (read-only, no signing)
+  const reader = createBlendReader(cfg.scanRpcUrl, cfg.scanNetworkPassphrase, cfg.scanUsdcContractId);
+
+  // Exec side: testnet signer + client (real txs, no real money)
+  const wallet = createKeypairWallet(Keypair.fromSecret(cfg.agentSignerSecret), cfg.execNetworkPassphrase); // swap to policy-signer wallet when ready
+  const soroban = createSorobanClient({
+    rpcUrl: cfg.execRpcUrl,
+    networkPassphrase: cfg.execNetworkPassphrase,
+    walletAddress: cfg.smartWalletAddress,
+    usdcId: cfg.execUsdcContractId,
+  });
   const executor = createExecutor(soroban, wallet);
   const llm = createAnthropicLlm(cfg.anthropicApiKey, cfg.anthropicModel);
 
@@ -32,12 +41,14 @@ async function main() {
     try {
       const now = Math.floor(Date.now() / 1000);
       const r = await runTick({
-        scan: async () => { const s = await scanYields(reader, cfg.blendPoolIds); state.lastScan = s as any; return s; },
+        scan: async () => { const s = await scanYields(reader, cfg.scanBlendPoolIds); state.lastScan = s as any; return s; },
         tolerance: cfg.tolerance,
         getPosition: () => db.getPosition(),
         decide: (ctx) => decide(llm, ctx as any),
-        rebalance: (f, t, a) => executor.rebalance(f, t, a),
-        deposit: (t, a) => executor.deposit(t, a),
+        // Execution always targets the single testnet exec pool regardless of which
+        // mainnet pool had the best yield — multi-pool exec is future work.
+        rebalance: (_fromMainnet, _toMainnet, a) => executor.deposit(cfg.execPoolId, a),
+        deposit: (_chosenMainnetPool, a) => executor.deposit(cfg.execPoolId, a),
         commitPosition: (p) => db.setPosition(p),
         log: (k, m, meta) => db.log(k, m, meta),
         recordRebalance: (a) => db.recordRebalance(a),
