@@ -3,45 +3,67 @@ import { createDefindexSource, type StrategyTvlReader } from "./defindex";
 import type { BlendReader, RawReserve } from "./scanner";
 import type { DefindexStrategyConfig } from "./config";
 
-const blendReader: BlendReader = {
+const usdcReader: BlendReader = {
   async readReserve(poolId: string): Promise<RawReserve> {
     return { poolId, name: "Blend Fixed", supplyApr: 0.086, totalSupplyUsdc: 155_000_0000000n, utilization: 0.62, oracleStale: false };
   },
 };
+const readerFor = (): BlendReader => usdcReader;
+
 const strategies: DefindexStrategyConfig[] = [
-  { strategyId: "C_STRAT_USDC", blendPoolId: "C_BLEND_FIXED", name: "DeFindex USDC · Blend Fixed", fallbackTvlUsdc: 1_000_0000000n },
+  {
+    strategyId: "C_STRAT_USDC", blendPoolId: "C_BLEND_FIXED", name: "DeFindex USDC · Blend Fixed",
+    asset: "USDC", assetContractId: "C_USDC", fallbackTvlUsdc: 1_000_0000000n,
+  },
 ];
 
 describe("createDefindexSource", () => {
-  it("derives APY/utilization/oracle from the underlying Blend pool, tagged defindex", async () => {
-    const src = createDefindexSource(blendReader, strategies);
+  it("derives APY/utilization/oracle from the underlying Blend reserve, tagged defindex", async () => {
+    const src = createDefindexSource(readerFor, strategies);
     expect(src.protocol).toBe("defindex");
     expect(await src.readPool("C_STRAT_USDC")).toMatchObject({
       protocol: "defindex", poolId: "C_STRAT_USDC", name: "DeFindex USDC · Blend Fixed",
-      apyBps: 860, utilizationBps: 6200, oracleHealthy: true,
+      asset: "USDC", apyBps: 860, utilizationBps: 6200, oracleHealthy: true,
     });
   });
 
+  it("reads each strategy's configured asset reserve via readerFor (multi-asset)", async () => {
+    const byAsset: Record<string, RawReserve> = {
+      C_USDC: { poolId: "C_FIXED", name: "Fixed", supplyApr: 0.0821, totalSupplyUsdc: 1n, utilization: 0.77, oracleStale: false },
+      C_EURC: { poolId: "C_FIXED", name: "Fixed", supplyApr: 0.0659, totalSupplyUsdc: 1n, utilization: 0.738, oracleStale: false },
+    };
+    const multiReaderFor = (assetId: string): BlendReader => ({
+      async readReserve(poolId) { return { ...byAsset[assetId], poolId }; },
+    });
+    const eurc: DefindexStrategyConfig = {
+      strategyId: "C_STRAT_EURC", blendPoolId: "C_FIXED", name: "DeFindex EURC · Fixed",
+      asset: "EURC", assetContractId: "C_EURC", fallbackTvlUsdc: 0n,
+    };
+    const src = createDefindexSource(multiReaderFor, [strategies[0], eurc]);
+    expect(await src.readPool("C_STRAT_USDC")).toMatchObject({ asset: "USDC", apyBps: 821, utilizationBps: 7700 });
+    expect(await src.readPool("C_STRAT_EURC")).toMatchObject({ asset: "EURC", apyBps: 659, utilizationBps: 7380 });
+  });
+
   it("uses configured fallback TVL when no on-chain reader is provided", async () => {
-    const src = createDefindexSource(blendReader, strategies);
+    const src = createDefindexSource(readerFor, strategies);
     expect((await src.readPool("C_STRAT_USDC"))?.tvlUsdc).toBe(1_000_0000000n);
   });
 
   it("prefers live on-chain strategy TVL when a reader returns a value", async () => {
     const tvlReader: StrategyTvlReader = { async readTotalManagedFunds() { return 7_500_0000000n; } };
-    const src = createDefindexSource(blendReader, strategies, tvlReader);
+    const src = createDefindexSource(readerFor, strategies, tvlReader);
     expect((await src.readPool("C_STRAT_USDC"))?.tvlUsdc).toBe(7_500_0000000n);
   });
 
   it("falls back to config TVL when the on-chain reader returns null or throws", async () => {
     const nullReader: StrategyTvlReader = { async readTotalManagedFunds() { return null; } };
     const throwReader: StrategyTvlReader = { async readTotalManagedFunds() { throw new Error("rpc"); } };
-    expect((await createDefindexSource(blendReader, strategies, nullReader).readPool("C_STRAT_USDC"))?.tvlUsdc).toBe(1_000_0000000n);
-    expect((await createDefindexSource(blendReader, strategies, throwReader).readPool("C_STRAT_USDC"))?.tvlUsdc).toBe(1_000_0000000n);
+    expect((await createDefindexSource(readerFor, strategies, nullReader).readPool("C_STRAT_USDC"))?.tvlUsdc).toBe(1_000_0000000n);
+    expect((await createDefindexSource(readerFor, strategies, throwReader).readPool("C_STRAT_USDC"))?.tvlUsdc).toBe(1_000_0000000n);
   });
 
   it("returns null for an unknown strategy id", async () => {
-    const src = createDefindexSource(blendReader, strategies);
+    const src = createDefindexSource(readerFor, strategies);
     expect(await src.readPool("C_UNKNOWN")).toBeNull();
   });
 });

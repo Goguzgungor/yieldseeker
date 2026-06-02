@@ -6,7 +6,7 @@ export interface ApiScoredPool {
   protocol: string; // yield source, e.g. "blend" | "defindex"
   poolId: string;
   name: string;
-  asset: "USDC";
+  asset: string;
   apyBps: number;
   tvlUsdc: string; // stroops, decimal string
   utilizationBps: number;

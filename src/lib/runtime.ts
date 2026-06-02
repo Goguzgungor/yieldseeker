@@ -12,7 +12,7 @@ import { z } from "zod";
 import { parseConfig, type Config } from "./config";
 import { createDb, type Db } from "./db";
 import * as registry from "./registry";
-import { createBlendReader, createBlendSource, scanSource } from "./scanner";
+import { createBlendReader, createBlendSource, scanSource, type BlendReader } from "./scanner";
 import { createDefindexSource } from "./defindex";
 import { createBlendOnchainPoolSource, createPoolDiscovery, isDiscoveryCacheFresh, DISCOVERY_TTL_MS, type PoolDiscovery } from "./discovery";
 import { createSorobanClient, createExecutor, type Executor } from "./executor";
@@ -102,8 +102,19 @@ export function getRuntime(): Runtime {
   // Scan side: mainnet reader (read-only, no signing).
   const reader = createBlendReader(cfg.scanRpcUrl, cfg.scanNetworkPassphrase, cfg.scanUsdcContractId);
   const blendSource = createBlendSource(reader);
+  // Per-asset Blend readers (memoized) so DeFindex can read the USDC / EURC / XLM
+  // reserve each strategy autocompounds into.
+  const blendReaderByAsset = new Map<string, BlendReader>([[cfg.scanUsdcContractId, reader]]);
+  const readerFor = (assetContractId: string): BlendReader => {
+    let r = blendReaderByAsset.get(assetContractId);
+    if (!r) {
+      r = createBlendReader(cfg.scanRpcUrl, cfg.scanNetworkPassphrase, assetContractId);
+      blendReaderByAsset.set(assetContractId, r);
+    }
+    return r;
+  };
   const defindexSource = cfg.scanDefindexStrategies.length
-    ? createDefindexSource(reader, cfg.scanDefindexStrategies)
+    ? createDefindexSource(readerFor, cfg.scanDefindexStrategies)
     : null;
 
   // Dynamic on-chain pool discovery (Blend backstop reward zone + factory deploy
@@ -439,6 +450,15 @@ export function getSerializedPosition(): SerializedPosition {
 
 export function getRecentLog(n = 50) {
   return getRuntime().db.recentLog(n);
+}
+
+/**
+ * Read an address's exec-side USDC balance in stroops (via the USDC SAC
+ * `balance(addr)` read-only simulation). Used by `/api/faucet` to report the
+ * recipient's balance after a mint. Returns 0n on any error.
+ */
+export function getUsdcBalanceStroops(who: string): Promise<bigint> {
+  return readUsdcBalance(getRuntime(), who);
 }
 
 // ── Per-user registry accessors (ARMA model) ─────────────────────────────────

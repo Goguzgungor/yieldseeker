@@ -33,6 +33,13 @@ const Schema = z.object({
   // Per-user execution reads wallets from the registry, so this stays only as the
   // default/legacy single-wallet address (and the keypair-mode exec target).
   SMART_WALLET_ADDRESS: z.string().min(1),
+  // BIP39 mnemonic whose SEP-5 m/44'/148'/0' key is the OWNER = admin/issuer of
+  // our EXEC_USDC_CONTRACT_ID SAC. Required for the self-serve testnet USDC faucet
+  // (`POST /api/faucet`), which mints our USDC into a smart account during
+  // onboarding. OPTIONAL here so the rest of the app still boots without it (only
+  // the faucet route needs it); the faucet fails loudly with a clear error if it
+  // is absent. Never logged or returned — only the derived public G… is used.
+  STELLAR_WALLET_MNEMONIC: z.string().min(1).optional(),
 
   // ── Smart account (ARMA-style per-user) — OZ ids proven on testnet ─────────
   // Defaults baked in so existing .env files keep working untouched.
@@ -55,12 +62,18 @@ const DefindexStrategySchema = z.object({
   strategyId: z.string().min(1),
   blendPoolId: z.string().min(1),
   name: z.string().min(1),
+  // Which reserve of the underlying Blend pool this strategy autocompounds into.
+  // `assetContractId` defaults to the scan USDC SAC when omitted (USDC strategies).
+  asset: z.string().min(1).default("USDC"),
+  assetContractId: z.string().min(1).optional(),
   fallbackTvlUsdc: z.coerce.number().nonnegative().default(0),
 });
 export interface DefindexStrategyConfig {
   strategyId: string;
   blendPoolId: string;
   name: string;
+  asset: string;
+  assetContractId: string;
   fallbackTvlUsdc: bigint;
 }
 
@@ -81,6 +94,8 @@ export function parseConfig(env: Record<string, string | undefined>) {
       strategyId: s.strategyId,
       blendPoolId: s.blendPoolId,
       name: s.name,
+      asset: s.asset,
+      assetContractId: s.assetContractId ?? e.SCAN_USDC_CONTRACT_ID,
       fallbackTvlUsdc: toStroops(s.fallbackTvlUsdc),
     }));
   return {
@@ -103,6 +118,8 @@ export function parseConfig(env: Record<string, string | undefined>) {
     execUsdcContractId: e.EXEC_USDC_CONTRACT_ID,
     agentSignerSecret: e.AGENT_SIGNER_SECRET,
     smartWalletAddress: e.SMART_WALLET_ADDRESS,
+    /** Faucet owner mnemonic (SAC admin). Undefined if not configured. */
+    stellarWalletMnemonic: e.STELLAR_WALLET_MNEMONIC,
     // Smart account (ARMA per-user)
     ed25519VerifierId: e.ED25519_VERIFIER_ID,
     spendingPolicyId: e.SPENDING_POLICY_ID,

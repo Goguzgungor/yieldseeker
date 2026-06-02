@@ -4,7 +4,7 @@ export interface PoolYield {
   protocol: string;        // yield source protocol, e.g. "blend" | "defindex"
   poolId: string;          // pool / strategy contract id
   name: string;
-  asset: "USDC";
+  asset: string;           // yield asset symbol, e.g. "USDC" | "EURC" | "XLM"
   apyBps: number;          // total supply APY in basis points (e.g. 860 = 8.6%)
   tvlUsdc: bigint;         // USDC TVL in stroops (7 decimals)
   utilizationBps: number;  // 0..10000

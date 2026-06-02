@@ -24,7 +24,7 @@ export interface SerializedScoredPool {
   protocol: string;
   poolId: string;
   name: string;
-  asset: "USDC";
+  asset: string;
   apyBps: number;
   tvlUsdc: string;
   utilizationBps: number;

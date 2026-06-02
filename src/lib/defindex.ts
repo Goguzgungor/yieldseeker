@@ -8,13 +8,14 @@ export interface StrategyTvlReader {
 }
 
 /**
- * DeFindex as a scan-only YieldSource. Each strategy autocompounds into a Blend
- * fixed pool, so APY / utilization / oracle health are read from that underlying
- * Blend pool (cfg.blendPoolId). TVL is read on-chain from the strategy when a
+ * DeFindex as a scan-only YieldSource. Each strategy autocompounds into one
+ * reserve (`cfg.asset`) of a Blend pool, so APY / utilization / oracle health are
+ * read from that reserve via `readerFor(cfg.assetContractId)` — multi-asset
+ * (USDC / EURC / XLM). TVL is read on-chain from the strategy when a
  * StrategyTvlReader is supplied, otherwise the configured fallback is used.
  */
 export function createDefindexSource(
-  blendReader: BlendReader,
+  readerFor: (assetContractId: string) => BlendReader,
   strategies: DefindexStrategyConfig[],
   tvlReader?: StrategyTvlReader,
 ): YieldSource {
@@ -25,7 +26,7 @@ export function createDefindexSource(
       const cfg = byId.get(strategyId);
       if (!cfg) return null;
 
-      const r = await blendReader.readReserve(cfg.blendPoolId);
+      const r = await readerFor(cfg.assetContractId).readReserve(cfg.blendPoolId);
       if (!r) return null;
 
       let tvlUsdc = cfg.fallbackTvlUsdc;
@@ -42,7 +43,7 @@ export function createDefindexSource(
         protocol: "defindex",
         poolId: strategyId,
         name: cfg.name,
-        asset: "USDC",
+        asset: cfg.asset,
         apyBps: Math.round(r.supplyApr * 10000),
         tvlUsdc,
         utilizationBps: Math.round(r.utilization * 10000),

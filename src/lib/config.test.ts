@@ -76,7 +76,7 @@ describe("parseConfig", () => {
     expect(() => parseConfig({ ...env, SCAN_DEFINDEX_STRATEGIES: "{not json" })).toThrow(/valid JSON/);
   });
 
-  it("parses DeFindex strategies from JSON and converts fallback TVL to stroops", () => {
+  it("parses DeFindex strategies from JSON, defaulting asset/assetContractId and converting TVL", () => {
     const c = parseConfig({
       ...env,
       SCAN_DEFINDEX_STRATEGIES: JSON.stringify([
@@ -84,7 +84,17 @@ describe("parseConfig", () => {
       ]),
     });
     expect(c.scanDefindexStrategies).toEqual([
-      { strategyId: "C_STRAT", blendPoolId: "C_A", name: "DeFindex USDC", fallbackTvlUsdc: 1000_0000000n },
+      { strategyId: "C_STRAT", blendPoolId: "C_A", name: "DeFindex USDC", asset: "USDC", assetContractId: "C_USDC_MAINNET", fallbackTvlUsdc: 1000_0000000n },
     ]);
+  });
+
+  it("keeps explicit asset + assetContractId for non-USDC DeFindex strategies", () => {
+    const c = parseConfig({
+      ...env,
+      SCAN_DEFINDEX_STRATEGIES: JSON.stringify([
+        { strategyId: "C_E", blendPoolId: "C_A", name: "DeFindex EURC", asset: "EURC", assetContractId: "C_EURC", fallbackTvlUsdc: 0 },
+      ]),
+    });
+    expect(c.scanDefindexStrategies[0]).toMatchObject({ asset: "EURC", assetContractId: "C_EURC" });
   });
 });
