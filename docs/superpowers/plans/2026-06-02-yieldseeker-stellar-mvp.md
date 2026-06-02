@@ -6,7 +6,7 @@
 
 **Architecture:** TypeScript/Node single package. An orchestrator loop runs `scanner → risk → agent(Claude tool-use) → executor`. The executor signs Blend `submit` transactions with an **agent policy signer** (ed25519, restricted to registered Blend pool contracts + caps) attached to a Soroban smart wallet. State and an activity log persist to SQLite; a thin REST/SSE API exposes them for the later frontend.
 
-**Tech Stack:** Node 20+, TypeScript, vitest, zod, `@stellar/stellar-sdk`, `@blend-capital/blend-sdk-js`, `smart-account-kit` (passkey-kit fallback), `@anthropic-ai/sdk` (Claude tool-use), `better-sqlite3`, `express`.
+**Tech Stack:** Node 20+, TypeScript, vitest, zod, `@stellar/stellar-sdk`, `@blend-capital/blend-sdk`, `smart-account-kit` (passkey-kit fallback), `@anthropic-ai/sdk` (Claude tool-use), `better-sqlite3`, `express`.
 
 **Spec:** `docs/superpowers/specs/2026-06-02-yieldseeker-stellar-mvp-design.md`
 
@@ -51,7 +51,7 @@ npm init -y
 - [ ] **Step 2: Install dependencies**
 
 ```bash
-npm i @stellar/stellar-sdk @blend-capital/blend-sdk-js @anthropic-ai/sdk better-sqlite3 express zod dotenv
+npm i @stellar/stellar-sdk @blend-capital/blend-sdk @anthropic-ai/sdk better-sqlite3 express zod dotenv
 npm i -D typescript tsx vitest @types/node @types/express @types/better-sqlite3
 ```
 
@@ -475,7 +475,7 @@ git add src/db.ts src/db.test.ts && git commit -m "feat: sqlite state + activity
 
 ## Task 5: SPIKE — verify Blend testnet pools + SDK API
 
-> Resolves spec risk #1 and #3. This is a throwaway script whose OUTPUT fills `.env` (USDC_CONTRACT_ID, BLEND_POOL_IDS) and confirms the exact `@blend-capital/blend-sdk-js` API used in Task 6/7.
+> Resolves spec risk #1 and #3. This is a throwaway script whose OUTPUT fills `.env` (USDC_CONTRACT_ID, BLEND_POOL_IDS) and confirms the exact `@blend-capital/blend-sdk` API used in Task 6/7.
 
 **Files:**
 - Create: `scripts/verify-blend-testnet.ts`
@@ -486,7 +486,7 @@ git add src/db.ts src/db.test.ts && git commit -m "feat: sqlite state + activity
 // Spike: load known Blend testnet pool(s), print reserve data + APY inputs.
 // Run, then copy real pool ids into .env (BLEND_POOL_IDS) and USDC into USDC_CONTRACT_ID.
 import { rpc } from "@stellar/stellar-sdk";
-import * as Blend from "@blend-capital/blend-sdk-js";
+import * as Blend from "@blend-capital/blend-sdk";
 
 const RPC = process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org";
 const NETWORK = "Test SDF Network ; September 2015";
@@ -628,7 +628,7 @@ Append to `src/scanner.ts`. Adjust field access to match the exact reserve shape
 
 ```ts
 import { rpc } from "@stellar/stellar-sdk";
-import * as Blend from "@blend-capital/blend-sdk-js";
+import * as Blend from "@blend-capital/blend-sdk";
 
 export function createBlendReader(rpcUrl: string, networkPassphrase: string): BlendReader {
   return {
@@ -829,7 +829,7 @@ Append to `src/executor.ts`. The Blend `submit` request shape comes from the Tas
 
 ```ts
 import { rpc, TransactionBuilder, BASE_FEE, Account } from "@stellar/stellar-sdk";
-import * as Blend from "@blend-capital/blend-sdk-js";
+import * as Blend from "@blend-capital/blend-sdk";
 
 export function createSorobanClient(opts: {
   rpcUrl: string; networkPassphrase: string; walletAddress: string; usdcId: string;

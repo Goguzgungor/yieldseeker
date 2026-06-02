@@ -12,6 +12,8 @@ Atıl USDC için Stellar (Soroban) üzerinde otonom bir DeFi yield-optimizasyon 
 
 **Tek cümlelik UX:** Kullanıcı bir kez kurar (smart wallet'a USDC yatırır + passkey ile agent'ı yetkilendirir); gerisini agent otonom halleder.
 
+> **Tasarım güncellemesi (2026-06-02 — uygulama sırasında):** Tarama/listeleme **gerçek Blend MAINNET pool'larını** okur (çok sayıda pool, gerçek ~%4-8 USDC getirisi); execution (deposit) **TESTNET**'te yapılır (gerçek tx, gerçek para yok). Sebep: testnet'te tek ve ~%0.05 APR'li pool var → saf testnet verisi demo'da gerçekçi durmuyor. Seçilen mainnet pool, deposit anında tek testnet exec pool'una eşlenir. Config `SCAN_*` (mainnet) ve `EXEC_*` (testnet) olarak ayrılmıştır.
+
 Bu spec **agent backend'ini (sistem)** kapsar. Web dashboard (frontend) sonraki ayrı bir aşamadır ve bu backend'in API'sini tüketir.
 
 ## 2. Hedefler / Hedef-Olmayanlar
