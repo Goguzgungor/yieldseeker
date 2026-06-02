@@ -9,7 +9,6 @@ import { useCallback, useEffect, useState } from "react";
 // `signTransaction` on a server-prepared XDR and POSTs the signed XDR back.
 
 const EXEC_NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
-const STROOPS_PER_USDC = 10_000_000;
 
 // ── API shapes ───────────────────────────────────────────────────────────────
 
@@ -91,20 +90,38 @@ async function deleteJson<T>(url: string): Promise<{ ok: boolean; status: number
   }
 }
 
-/** Whole/decimal USDC → stroops (7 decimals), as a decimal string for the API. */
-function usdcToStroopsStr(amountUsdc: number): string {
-  return String(Math.round(amountUsdc * STROOPS_PER_USDC));
+/**
+ * Self-serve faucet: mint our testnet USDC straight into the smart account `C…`
+ * (no external USDC needed, no classic trustline). Returns the tx hash + the
+ * smart account's new USDC balance (stroops, decimal string). Throws on failure.
+ */
+async function faucetMint(opts: {
+  to: string;
+  amountUsdc: number;
+}): Promise<{ txHash: string; balanceStroops: string | null }> {
+  const res = await postJson<{
+    ok: boolean;
+    txHash: string;
+    amount: number;
+    balanceStroops: string | null;
+    error?: string;
+  }>("/api/faucet", { to: opts.to, amount: opts.amountUsdc });
+  if (!res.ok || !res.data?.ok || !res.data.txHash) {
+    throw new Error(`faucet: ${res.data?.error ?? `HTTP ${res.status}`}`);
+  }
+  return { txHash: res.data.txHash, balanceStroops: res.data.balanceStroops };
 }
 
 /**
  * Server-prepare an onboarding tx, sign it in Freighter, submit it server-side.
  * Returns the on-chain tx hash. Throws with a readable message on any failure.
+ *
+ * Used for the `deploy` step (createCustomContract, user-signed). Funding is no
+ * longer Freighter-driven — the Fund step self-serve-mints via `/api/faucet`.
  */
 async function prepareSignSubmit(opts: {
   owner: string;
-  step: "deploy" | "fund";
-  smartWallet?: string;
-  amountStroops?: string;
+  step: "deploy";
   label: string;
 }): Promise<{ hash: string; contractId?: string }> {
   const prep = await postJson<{ xdr: string; contractId?: string; error?: string }>(
@@ -112,8 +129,6 @@ async function prepareSignSubmit(opts: {
     {
       owner: opts.owner,
       step: opts.step,
-      smartWallet: opts.smartWallet,
-      amountStroops: opts.amountStroops,
     },
   );
   if (!prep.ok || !prep.data?.xdr) {
@@ -151,6 +166,11 @@ export interface OnboardingState {
   /** The smart wallet C-address captured during/after deploy (for display). */
   smartWallet: string | null;
   agent: AgentInfo | null;
+  /**
+   * The smart account's USDC balance in stroops (decimal string), set after the
+   * faucet mint in the Fund step. null until known.
+   */
+  saUsdcStroops: string | null;
   /** True while a demo reset (un-register) request is in flight. */
   resetting: boolean;
   /** Kick off the full deploy → authorize → fund → register flow. */
@@ -184,6 +204,7 @@ export function useOnboarding(ownerAddress: string | null): OnboardingState {
   const [error, setError] = useState<string | null>(null);
   const [smartWallet, setSmartWallet] = useState<string | null>(null);
   const [agent, setAgent] = useState<AgentInfo | null>(null);
+  const [saUsdcStroops, setSaUsdcStroops] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
 
   const setStep = useCallback((key: StepKey, patch: Partial<OnboardingStep>) => {
@@ -210,6 +231,7 @@ export function useOnboarding(ownerAddress: string | null): OnboardingState {
     if (!ownerAddress) {
       setRegistered(null);
       setSmartWallet(null);
+      setSaUsdcStroops(null);
       setSteps(INITIAL_STEPS);
       setError(null);
       return;
@@ -237,6 +259,7 @@ export function useOnboarding(ownerAddress: string | null): OnboardingState {
     // Back to a clean onboarding slate, then re-pull status (now 404 ⇒ false).
     setSteps(INITIAL_STEPS);
     setSmartWallet(null);
+    setSaUsdcStroops(null);
     await fetchStatus(ownerAddress);
     setResetting(false);
   }, [ownerAddress, resetting, fetchStatus]);
@@ -251,10 +274,9 @@ export function useOnboarding(ownerAddress: string | null): OnboardingState {
       setRunning(true);
       setError(null);
       setSteps(INITIAL_STEPS);
+      setSaUsdcStroops(null);
 
       try {
-        const amountStroops = usdcToStroopsStr(amountUsdc);
-
         // Load the agent + demo-owner keys (informational + drives the panel).
         const agentRes = await getJson<AgentInfo>("/api/agent");
         if (!agentRes.ok || !agentRes.data) {
@@ -288,16 +310,13 @@ export function useOnboarding(ownerAddress: string | null): OnboardingState {
           txHash: hashes[hashes.length - 1],
         });
 
-        // ── STEP 3: fund the smart account with USDC (Freighter transfer) ──
-        setStep("fund", { status: "active", detail: `transferring ${amountUsdc} USDC…` });
-        const fund = await prepareSignSubmit({
-          owner: ownerAddress,
-          step: "fund",
-          smartWallet: contractId,
-          amountStroops,
-          label: "fund",
-        });
-        setStep("fund", { status: "done", detail: `${amountUsdc} USDC → smart account`, txHash: fund.hash });
+        // ── STEP 3: fund the smart account by minting our test USDC into it ──
+        // Self-serve faucet: the backend mints our own testnet USDC SAC straight
+        // into the smart account `C…` (no external USDC, no classic trustline).
+        setStep("fund", { status: "active", detail: `minting ${amountUsdc} test USDC…` });
+        const fund = await faucetMint({ to: contractId, amountUsdc });
+        setSaUsdcStroops(fund.balanceStroops);
+        setStep("fund", { status: "done", detail: `${amountUsdc} USDC → smart account`, txHash: fund.txHash });
 
         // ── STEP 4: register the user (records the SA + rule ids) ──
         setStep("register", { status: "active", detail: "recording your smart account…" });
@@ -337,6 +356,7 @@ export function useOnboarding(ownerAddress: string | null): OnboardingState {
     error,
     smartWallet,
     agent,
+    saUsdcStroops,
     resetting,
     start,
     refresh,

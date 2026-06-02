@@ -16,14 +16,14 @@ interface Props {
 const STEP_TITLES: Record<StepKey, string> = {
   deploy: "Create smart account",
   authorize: "Authorize agent",
-  fund: "Fund account",
+  fund: "Get test USDC",
   register: "Activate",
 };
 
 const STEP_HINTS: Record<StepKey, string> = {
   deploy: "Deploy your personal OpenZeppelin smart account on Stellar testnet.",
   authorize: "Grant the agent a capped, on-chain rule to manage only your USDC.",
-  fund: "Move USDC into your smart account for the agent to deploy.",
+  fund: "We mint test USDC straight into your smart account — no external USDC needed.",
   register: "Hand off to the autonomous agent loop.",
 };
 
@@ -35,12 +35,24 @@ const TESTNET_TX_URL = (hash: string) => `https://stellar.expert/explorer/testne
  * already has a smart account, otherwise a 4-step setup flow.
  */
 export default function Onboarding({ ownerAddress, onboarding, open, onClose }: Props) {
-  const { registered, loadingStatus, steps, running, error, smartWallet, start, agent, resetDemo, resetting } =
-    onboarding;
+  const {
+    registered,
+    loadingStatus,
+    steps,
+    running,
+    error,
+    smartWallet,
+    start,
+    agent,
+    saUsdcStroops,
+    resetDemo,
+    resetting,
+  } = onboarding;
   const [amount, setAmount] = useState("500");
 
   const amountNum = Number(amount);
-  const amountValid = Number.isFinite(amountNum) && amountNum > 0;
+  // The faucet caps each mint at 5,000 USDC (see /api/faucet).
+  const amountValid = Number.isFinite(amountNum) && amountNum > 0 && amountNum <= 5000;
 
   return (
     <>
@@ -103,9 +115,15 @@ export default function Onboarding({ ownerAddress, onboarding, open, onClose }: 
                   ))}
                 </div>
 
+                <div style={styles.faucetNote}>
+                  <span style={styles.faucetBadge}>SELF-SERVE</span>
+                  We&rsquo;ll mint test USDC straight to your smart account — no external USDC
+                  needed.
+                </div>
+
                 <div style={styles.amountBlock}>
                   <label style={styles.metricLabel} htmlFor="ys-fund-amount">
-                    USDC TO DEPOSIT
+                    TEST USDC TO MINT
                   </label>
                   <div style={styles.amountRow}>
                     <input
@@ -119,8 +137,18 @@ export default function Onboarding({ ownerAddress, onboarding, open, onClose }: 
                     />
                     <span style={styles.amountUnit}>USDC</span>
                   </div>
-                  <div style={styles.capHint}>Agent spending is on-chain capped at 5,000 USDC / day.</div>
+                  <div style={styles.capHint}>
+                    Faucet mints up to 5,000 USDC / request. Agent spending is then on-chain capped
+                    at 5,000 USDC / day.
+                  </div>
                 </div>
+
+                {saUsdcStroops !== null && (
+                  <div style={styles.balanceReadout}>
+                    <span style={styles.metricLabel}>SMART ACCOUNT USDC</span>
+                    <span style={styles.balanceValue}>{formatUsdc(saUsdcStroops)} USDC</span>
+                  </div>
+                )}
 
                 {error && <div style={styles.errorBox}>{error}</div>}
 
@@ -129,15 +157,16 @@ export default function Onboarding({ ownerAddress, onboarding, open, onClose }: 
                   disabled={running || !amountValid}
                   onClick={() => void start(amountNum)}
                 >
-                  {running ? "Setting up…" : "Begin setup"}
+                  {running ? "Setting up…" : "Get test USDC & activate"}
                 </button>
 
                 <div style={styles.fineprint}>
-                  Step 2 is signed by a backend demo owner: Freighter&rsquo;s{" "}
-                  <code style={styles.code}>signAuthEntry</code> only signs the standard Soroban auth
-                  preimage, not the OpenZeppelin SmartAccount&rsquo;s custom AuthPayload digest (which
-                  appends the context-rule ids). Steps 1, 3 and 4 are signed natively in your
-                  Freighter wallet.
+                  Step 3 mints our own testnet USDC into your smart account (we control the USDC
+                  issuer on testnet), so you never need to source USDC. Step 2 is signed by a backend
+                  demo owner: Freighter&rsquo;s <code style={styles.code}>signAuthEntry</code> only
+                  signs the standard Soroban auth preimage, not the OpenZeppelin SmartAccount&rsquo;s
+                  custom AuthPayload digest (which appends the context-rule ids). Steps 1 and 4 are
+                  signed natively in your Freighter wallet.
                   {smartWallet && (
                     <>
                       {" "}
@@ -441,7 +470,45 @@ const styles: Record<string, S> = {
     minWidth: 0,
   },
   amountUnit: { fontSize: 12, color: "var(--mut)", fontWeight: 600, letterSpacing: "0.08em" },
-  capHint: { fontSize: 10.5, color: "var(--mut)" },
+  capHint: { fontSize: 10.5, color: "var(--mut)", lineHeight: 1.5 },
+  // self-serve faucet
+  faucetNote: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+    fontSize: 12.5,
+    color: "#5a5a60",
+    background: "var(--blue-faint)",
+    border: "1px solid var(--blue-soft)",
+    borderRadius: 10,
+    padding: "11px 13px",
+    lineHeight: 1.5,
+  },
+  faucetBadge: {
+    fontSize: 9,
+    fontWeight: 700,
+    letterSpacing: "0.12em",
+    color: "var(--blue)",
+    background: "#fff",
+    border: "1px solid var(--blue-soft)",
+    borderRadius: 999,
+    padding: "2px 8px",
+  },
+  balanceReadout: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    background: "var(--chip)",
+    borderRadius: 12,
+    padding: "12px 14px",
+  },
+  balanceValue: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: "var(--blue)",
+    fontFamily: "var(--font-plex-mono), ui-monospace, monospace",
+  },
   errorBox: {
     fontSize: 12,
     color: "#d23f3f",
