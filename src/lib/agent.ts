@@ -26,8 +26,15 @@ export async function decide(llm: LlmClient, ctx: DecisionContext): Promise<Deci
     "If the current pool is already the best eligible one, do NOT rebalance — just explain why.",
     `User risk tolerance: ${ctx.tolerance}.`,
   ].join(" ");
-  const user = JSON.stringify({ position: { ...ctx.position, amountUsdc: ctx.position.amountUsdc.toString() },
-    pools: ctx.pools.map((p) => ({ ...p, tvlUsdc: p.tvlUsdc.toString() })) });
+  // Convert tvlUsdc from stroops (7 decimals) to whole USDC so the LLM reasons
+  // with the correct scale (e.g. $48.2M, not $481.8B).
+  const user = JSON.stringify({
+    position: { ...ctx.position, amountUsdc: ctx.position.amountUsdc.toString() },
+    pools: ctx.pools.map((p) => ({
+      ...p,
+      tvlUsdc: (Number(p.tvlUsdc) / 1e7).toFixed(2) + " USDC",
+    })),
+  });
 
   const r = await llm.runToolLoop(system, user, tools);
   if (r.toolName === "rebalance" && r.input) {

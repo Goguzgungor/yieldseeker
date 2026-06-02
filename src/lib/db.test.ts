@@ -20,4 +20,30 @@ describe("db", () => {
     db.recordRebalance(500_0000000n, 1_000_100);
     expect(db.rebalancedSince(0)).toBe(1500_0000000n);
   });
+
+  it("setKV / getKV round-trips arbitrary JSON strings", () => {
+    const db = createDb(":memory:");
+    // Not yet set → null
+    expect(db.getKV("lastScan")).toBeNull();
+
+    // Write a JSON array (simulating scan snapshot)
+    const snapshot = JSON.stringify([{ poolId: "C_POOL", apyBps: 860 }]);
+    db.setKV("lastScan", snapshot);
+    expect(db.getKV("lastScan")).toBe(snapshot);
+
+    // Overwrite (upsert) with a new value
+    const updated = JSON.stringify([{ poolId: "C_POOL", apyBps: 900 }]);
+    db.setKV("lastScan", updated);
+    expect(db.getKV("lastScan")).toBe(updated);
+
+    // Independent key is unaffected
+    expect(db.getKV("lastDecision")).toBeNull();
+
+    // Write a decision JSON object
+    const decision = JSON.stringify({ action: "hold", chosenPoolId: null, rationale: "ok" });
+    db.setKV("lastDecision", decision);
+    expect(db.getKV("lastDecision")).toBe(decision);
+    // Scan key still has its own value
+    expect(db.getKV("lastScan")).toBe(updated);
+  });
 });

@@ -136,6 +136,10 @@ async function tick(rt: Runtime): Promise<void> {
         // Cache the SCORED pools (deterministic; matches what runTick scores
         // internally) so the UI gets riskScore/eligible/reason without a re-scan.
         rt.lastScan = scorePools(s, rt.cfg.tolerance);
+        // Persist to DB so route handlers (which may run in a separate module
+        // instance) can read the latest snapshot regardless of which process
+        // writes vs. reads.
+        rt.db.setKV("lastScan", JSON.stringify(serializeScoredPools(rt.lastScan)));
         return s;
       },
       tolerance: rt.cfg.tolerance,
@@ -148,6 +152,8 @@ async function tick(rt: Runtime): Promise<void> {
           chosenPoolId: decision.action === "rebalance" ? decision.toPool ?? null : null,
           rationale: decision.rationale,
         };
+        // Persist decision to DB for cross-instance visibility.
+        rt.db.setKV("lastDecision", JSON.stringify(rt.lastDecision));
         return decision;
       },
       // Execution always targets the single testnet exec pool regardless of which
@@ -222,14 +228,39 @@ export function getRecentLog(n = 50) {
   return getRuntime().db.recentLog(n);
 }
 
-/** Cached most-recent SCORED scan, BigInts rendered as strings for JSON. */
+/**
+ * Most-recent SCORED scan — reads from the SQLite DB so it is consistent
+ * regardless of which module instance (agent loop vs. route handler) calls it.
+ * Falls back to the in-memory copy when the DB has no snapshot yet (e.g. very
+ * first request before the first tick completes).
+ */
 export function getLastScan(): SerializedScoredPool[] {
-  return serializeScoredPools(getRuntime().lastScan);
+  const rt = getRuntime();
+  const raw = rt.db.getKV("lastScan");
+  if (raw) {
+    try {
+      return JSON.parse(raw) as SerializedScoredPool[];
+    } catch {
+      // corrupt entry; fall through to in-memory copy
+    }
+  }
+  return serializeScoredPools(rt.lastScan);
 }
 
-/** Latest agent decision (chosen pool + rationale + action), or null if none yet. */
+/**
+ * Latest agent decision — reads from the SQLite DB so it is consistent
+ * regardless of which module instance (agent loop vs. route handler) calls it.
+ * Falls back to the in-memory copy / default when the DB has no entry yet.
+ */
 export function getDecision(): LatestDecision {
-  return (
-    getRuntime().lastDecision ?? { action: "hold", chosenPoolId: null, rationale: "" }
-  );
+  const rt = getRuntime();
+  const raw = rt.db.getKV("lastDecision");
+  if (raw) {
+    try {
+      return JSON.parse(raw) as LatestDecision;
+    } catch {
+      // corrupt entry; fall through to in-memory copy
+    }
+  }
+  return rt.lastDecision ?? { action: "hold", chosenPoolId: null, rationale: "" };
 }

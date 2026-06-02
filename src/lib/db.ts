@@ -7,6 +7,7 @@ export function createDb(path = "yieldseeker.sqlite") {
     CREATE TABLE IF NOT EXISTS position (id INTEGER PRIMARY KEY CHECK (id=1), poolId TEXT, amount TEXT);
     CREATE TABLE IF NOT EXISTS activity (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, kind TEXT, message TEXT, meta TEXT);
     CREATE TABLE IF NOT EXISTS rebalances (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, amount TEXT);
+    CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `);
 
   return {
@@ -34,6 +35,21 @@ export function createDb(path = "yieldseeker.sqlite") {
     rebalancedSince(sinceTs: number): bigint {
       const rows = db.prepare(`SELECT amount FROM rebalances WHERE ts >= ?`).all(sinceTs) as { amount: string }[];
       return rows.reduce((s, r) => s + BigInt(r.amount), 0n);
+    },
+    /**
+     * Persist an arbitrary JSON string under `key`. Used to share scan snapshots
+     * and agent decisions between the instrumentation process (agent loop) and the
+     * Next.js route handlers, which may resolve separate in-memory module instances.
+     */
+    setKV(key: string, value: string): void {
+      db.prepare(`INSERT INTO kv (key,value) VALUES (?,?)
+                  ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
+        .run(key, value);
+    },
+    /** Returns the stored value for `key`, or `null` if not yet set. */
+    getKV(key: string): string | null {
+      const row = db.prepare(`SELECT value FROM kv WHERE key=?`).get(key) as { value: string } | undefined;
+      return row ? row.value : null;
     },
   };
 }
