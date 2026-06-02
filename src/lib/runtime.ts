@@ -2,6 +2,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 import { parseConfig, type Config } from "./config";
 import { createDb, type Db } from "./db";
 import { createBlendReader, createBlendSource, scanSource } from "./scanner";
+import { createDefindexSource } from "./defindex";
 import { createBlendOnchainPoolSource, createPoolDiscovery, isDiscoveryCacheFresh, DISCOVERY_TTL_MS, type PoolDiscovery } from "./discovery";
 import { createSorobanClient, createExecutor, type Executor } from "./executor";
 import { createKeypairWallet } from "./wallet";
@@ -37,6 +38,7 @@ export interface Runtime {
   cfg: Config;
   db: Db;
   blendSource: YieldSource;
+  defindexSource: YieldSource | null;
   poolDiscovery: PoolDiscovery;
   executor: Executor;
   llm: LlmClient;
@@ -84,6 +86,9 @@ export function getRuntime(): Runtime {
   // Scan side: mainnet reader (read-only, no signing).
   const reader = createBlendReader(cfg.scanRpcUrl, cfg.scanNetworkPassphrase, cfg.scanUsdcContractId);
   const blendSource = createBlendSource(reader);
+  const defindexSource = cfg.scanDefindexStrategies.length
+    ? createDefindexSource(reader, cfg.scanDefindexStrategies)
+    : null;
 
   // Dynamic on-chain pool discovery (Blend backstop reward zone + factory deploy
   // events), with the curated SCAN_BLEND_POOL_IDS as a fallback.
@@ -110,6 +115,7 @@ export function getRuntime(): Runtime {
     cfg,
     db,
     blendSource,
+    defindexSource,
     poolDiscovery,
     executor,
     llm,
@@ -134,6 +140,13 @@ async function tick(rt: Runtime): Promise<void> {
       scan: async () => {
         const poolIds = rt.poolIds && rt.poolIds.length ? rt.poolIds : rt.cfg.scanBlendPoolIds;
         const s = await scanSource(rt.blendSource, poolIds);
+        if (rt.defindexSource) {
+          const dfx = await scanSource(
+            rt.defindexSource,
+            rt.cfg.scanDefindexStrategies.map((x) => x.strategyId),
+          );
+          s.push(...dfx);
+        }
         // Cache the SCORED pools (deterministic; matches what runTick scores
         // internally) so the UI gets riskScore/eligible/reason without a re-scan.
         rt.lastScan = scorePools(s, rt.cfg.tolerance);
