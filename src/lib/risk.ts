@@ -21,7 +21,17 @@ export function scorePools(pools: PoolYield[], tolerance: RiskTolerance): Scored
     let reason: string | undefined;
     if (!p.oracleHealthy) { eligible = false; reason = "oracle unhealthy / flagged"; }
     else if (p.tvlUsdc < MIN_TVL[tolerance]) { eligible = false; reason = "TVL below tolerance floor"; }
-    else if (riskScore > MAX_RISK[tolerance]) { eligible = false; reason = "risk score above tolerance"; }
+    else if (riskScore > MAX_RISK[tolerance]) {
+      eligible = false;
+      // Surface WHY: the score vs. the tolerance cap, plus the dominant driver(s)
+      // so the UI can explain a high risk score instead of just stating it.
+      const utilPct = Math.round(p.utilizationBps / 100);
+      const drivers: string[] = [];
+      if (utilRisk >= tvlRisk) drivers.push(`high utilization ${utilPct}%`);
+      if (tvlRisk >= 10) drivers.push("low TVL");
+      if (drivers.length === 0) drivers.push(`utilization ${utilPct}%`);
+      reason = `risk ${riskScore} > ${MAX_RISK[tolerance]} (${drivers.join(", ")})`;
+    }
 
     return { ...p, riskScore, eligible, reason };
   });

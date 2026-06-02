@@ -1,21 +1,26 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import NetworkGraph from "./NetworkGraph";
 import AnalysisPanel from "./AnalysisPanel";
+import Onboarding from "./Onboarding";
 import { useLivingData } from "./useLivingData";
 import { useFreighter } from "./useFreighter";
+import { useOnboarding } from "./useOnboarding";
 import { formatApy, formatUsdc, networkLabel, truncateAddress } from "./format";
 import { FREIGHTER_INSTALL_URL } from "./links";
 
-const RAIL = [
-  { key: "blend", glyph: "B", label: "Blend", on: true },
-  { key: "soon1", glyph: "◴", label: "Soroswap · soon", on: false },
-  { key: "soon2", glyph: "≋", label: "Aquarius · soon", on: false },
-  { key: "soon3", glyph: "◍", label: "Phoenix · soon", on: false },
+// Known yield-source protocols (rail order + glyph). A dot lights up when the
+// latest scan actually contains pools from that protocol (derived from
+// pool.protocol), so the rail honestly reflects the multi-protocol set the agent
+// is watching — Blend and DeFindex today, the rest "· soon".
+const PROTOCOLS = [
+  { key: "blend", glyph: "B", label: "Blend" },
+  { key: "defindex", glyph: "D", label: "DeFindex" },
+  { key: "soroswap", glyph: "◴", label: "Soroswap" },
+  { key: "aquarius", glyph: "≋", label: "Aquarius" },
+  { key: "phoenix", glyph: "◍", label: "Phoenix" },
 ];
-
-const TICK_COUNT = 32;
 
 /** Returns a human-readable age string like "2m ago" or "just now". */
 function useAgeLabel(updatedAt: number | null): string {
@@ -38,12 +43,25 @@ function useAgeLabel(updatedAt: number | null): string {
 }
 
 export default function LivingNetwork() {
-  const { pools, scanUpdatedAt, position, activity, loading, scanning, connected, rescan } = useLivingData();
+  const { pools, scanUpdatedAt, position, activity, loading, scanning, rescan } = useLivingData();
   const wallet = useFreighter();
+  const onboarding = useOnboarding(wallet.address);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
-  const [addrInput, setAddrInput] = useState("");
+  const [onboardOpen, setOnboardOpen] = useState(false);
   const ageLabel = useAgeLabel(scanUpdatedAt);
+
+  // Gently open the onboarding panel the first time we learn a connected wallet
+  // is NOT yet registered. Re-armed whenever the address changes so each newly
+  // connected wallet gets one nudge (but never nags after the user closes it).
+  const nudgedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (wallet.address && onboarding.registered === false && nudgedFor.current !== wallet.address) {
+      nudgedFor.current = wallet.address;
+      setOnboardOpen(true);
+    }
+    if (!wallet.address) setOnboardOpen(false);
+  }, [wallet.address, onboarding.registered]);
 
   const selectedPool = useMemo(
     () => pools.find((p) => p.poolId === selectedId) ?? null,
@@ -56,6 +74,9 @@ export default function LivingNetwork() {
     if (!eligible.length) return null;
     return eligible.reduce((a, b) => (b.apyBps > a.apyBps ? b : a)).apyBps;
   }, [pools]);
+
+  // Distinct protocols present in the latest scan → which rail dots light up.
+  const activeProtocols = useMemo(() => new Set(pools.map((p) => p.protocol)), [pools]);
 
   const idleUsdc = formatUsdc(position?.amountUsdc);
   const latestLog = activity[0];
@@ -83,28 +104,30 @@ export default function LivingNetwork() {
           >
             {paused ? "▶" : "⏸"}
           </button>
-          <Timeline active={active} connected={connected} />
         </div>
 
         {/* ───────── left rail ───────── */}
         <div style={styles.rail}>
-          {RAIL.map((r) => (
-            <div
-              key={r.key}
-              className="ys-rail-dot"
-              style={{ ...styles.railDot, ...(r.on ? styles.railDotOn : {}) }}
-            >
-              {r.glyph}
-              <span
-                style={{
-                  ...styles.railLabel,
-                  ...(r.on ? styles.railLabelOn : styles.railLabelOff),
-                }}
+          {PROTOCOLS.map((r) => {
+            const on = activeProtocols.has(r.key);
+            return (
+              <div
+                key={r.key}
+                className="ys-rail-dot"
+                style={{ ...styles.railDot, ...(on ? styles.railDotOn : {}) }}
               >
-                {r.label}
-              </span>
-            </div>
-          ))}
+                {r.glyph}
+                <span
+                  style={{
+                    ...styles.railLabel,
+                    ...(on ? styles.railLabelOn : styles.railLabelOff),
+                  }}
+                >
+                  {on ? r.label : `${r.label} · soon`}
+                </span>
+              </div>
+            );
+          })}
         </div>
 
         {/* ───────── note ───────── */}
@@ -112,10 +135,10 @@ export default function LivingNetwork() {
           {loading
             ? "Connecting to YieldSeeker…"
             : pools.length === 0
-              ? "First scan in progress — agent discovering Blend pools…"
-              : `live network — agent watching ${pools.length} mainnet Blend pool${
+              ? "First scan in progress — agent discovering pools…"
+              : `live network — agent watching ${pools.length} mainnet pool${
                   pools.length === 1 ? "" : "s"
-                }`}
+                } across ${activeProtocols.size} protocol${activeProtocols.size === 1 ? "" : "s"}`}
         </div>
 
         {/* ───────── stage / graph ───────── */}
@@ -150,7 +173,21 @@ export default function LivingNetwork() {
           <Stat label="Pools" value={loading ? "—" : String(pools.length)} />
           <Stat label="Best APY" value={bestApy != null ? formatApy(bestApy) : "—"} />
           <Stat label="Idle USDC" value={loading ? "—" : idleUsdc} />
-          <Stat label="Network" value={networkLabel(wallet.network) || "Stellar"} />
+          {onboarding.registered ? (
+            <button
+              type="button"
+              style={{ ...styles.stat, cursor: "pointer", textAlign: "left" }}
+              onClick={() => setOnboardOpen(true)}
+              title="View your smart account"
+            >
+              <b style={{ ...styles.statLabel, color: "var(--blue)" }}>YOUR SA</b>
+              <span style={styles.statValue}>
+                {truncateAddress(onboarding.registered.smartWallet, 4, 4)}
+              </span>
+            </button>
+          ) : (
+            <Stat label="Network" value={networkLabel(wallet.network) || "Stellar"} />
+          )}
           {ageLabel && (
             <div style={styles.freshness}>
               <span style={styles.freshnessLabel}>CACHE</span>
@@ -158,33 +195,14 @@ export default function LivingNetwork() {
             </div>
           )}
 
-          <form
-            style={styles.addr}
-            onSubmit={(e) => {
-              e.preventDefault();
-              const v = addrInput.trim();
-              if (/^[CG][A-Z0-9]{30,}$/.test(v)) {
-                window.open(
-                  `https://stellar.expert/explorer/public/${v.startsWith("C") ? "contract" : "account"}/${v}`,
-                  "_blank",
-                  "noreferrer",
-                );
-              }
-            }}
-          >
-            <input
-              style={styles.addrInput}
-              placeholder="G… / C… inspect address"
-              value={addrInput}
-              onChange={(e) => setAddrInput(e.target.value)}
-              spellCheck={false}
-            />
-            <button type="submit" style={styles.go}>
-              Go
-            </button>
-          </form>
+          {/* flexible spacer keeps the wallet + scan controls right-aligned */}
+          <div style={{ flex: 1 }} />
 
-          <WalletButton wallet={wallet} />
+          <WalletButton
+            wallet={wallet}
+            registered={!!onboarding.registered}
+            onOpenAccount={() => setOnboardOpen(true)}
+          />
 
           <button
             style={{ ...styles.start, ...(active ? styles.startActive : {}) }}
@@ -209,6 +227,12 @@ export default function LivingNetwork() {
         </div>
 
         <AnalysisPanel pool={selectedPool} position={position} onClose={() => setSelectedId(null)} />
+        <Onboarding
+          ownerAddress={wallet.address}
+          onboarding={onboarding}
+          open={onboardOpen}
+          onClose={() => setOnboardOpen(false)}
+        />
       </div>
 
       {/* keyframes + hover interactions that inline styles can't express */}
@@ -218,37 +242,6 @@ export default function LivingNetwork() {
 }
 
 // ── sub-components ───────────────────────────────────────────────────────────
-
-function Timeline({ active, connected }: { active: boolean; connected: boolean }) {
-  return (
-    <div style={styles.timeline}>
-      <div
-        className={active ? "ys-timeline-track ys-scanning" : "ys-timeline-track"}
-        style={styles.timelineTrack}
-      >
-        {Array.from({ length: TICK_COUNT }).map((_, i) => {
-          const tall = i % 6 === 2;
-          return (
-            <span
-              key={i}
-              className="ys-tick"
-              style={{
-                ...styles.tick,
-                height: tall ? 18 : 11,
-                background: tall ? "var(--ink)" : "#c7c7c0",
-                animationDelay: `${(i * 90) % 2000}ms`,
-              }}
-            />
-          );
-        })}
-      </div>
-      <span style={{ ...styles.live, opacity: connected ? 1 : 0.4 }}>
-        <span className={connected ? "ys-live-dot ys-live-on" : "ys-live-dot"} />
-        {connected ? "LIVE" : "···"}
-      </span>
-    </div>
-  );
-}
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -275,7 +268,15 @@ function EmptyStage({ loading, idleUsdc }: { loading: boolean; idleUsdc: string 
   );
 }
 
-function WalletButton({ wallet }: { wallet: ReturnType<typeof useFreighter> }) {
+function WalletButton({
+  wallet,
+  registered,
+  onOpenAccount,
+}: {
+  wallet: ReturnType<typeof useFreighter>;
+  registered: boolean;
+  onOpenAccount: () => void;
+}) {
   if (wallet.installed === false) {
     return (
       <a
@@ -290,22 +291,41 @@ function WalletButton({ wallet }: { wallet: ReturnType<typeof useFreighter> }) {
     );
   }
   if (wallet.address) {
+    // The chip opens the account / onboarding panel; a small ✕ disconnects, so
+    // the primary action surfaces the user's smart account rather than dropping
+    // the connection by accident.
     return (
-      <button
-        style={styles.walletConnected}
-        onClick={wallet.disconnect}
-        title={`${wallet.address}\nClick to disconnect`}
-      >
-        <span className="ys-live-dot ys-live-on" />
-        <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-          <span style={{ fontSize: 12.5, fontWeight: 600 }}>
-            {truncateAddress(wallet.address, 4, 4)}
+      <div style={styles.walletConnected}>
+        <button
+          style={styles.walletChip}
+          onClick={onOpenAccount}
+          title={`${wallet.address}\nClick to ${registered ? "view your smart account" : "set up your account"}`}
+        >
+          <span className="ys-live-dot ys-live-on" />
+          <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+              {truncateAddress(wallet.address, 4, 4)}
+            </span>
+            <span
+              style={{
+                fontSize: 9,
+                color: registered ? "var(--blue)" : "var(--mut)",
+                letterSpacing: "0.06em",
+              }}
+            >
+              {registered ? "agent active · manage" : "set up account"}
+            </span>
           </span>
-          <span style={{ fontSize: 9, color: "var(--mut)", letterSpacing: "0.06em" }}>
-            {networkLabel(wallet.network)} · disconnect
-          </span>
-        </span>
-      </button>
+        </button>
+        <button
+          style={styles.walletDisconnect}
+          onClick={wallet.disconnect}
+          aria-label="Disconnect wallet"
+          title="Disconnect"
+        >
+          ✕
+        </button>
+      </div>
     );
   }
   return (
@@ -609,12 +629,25 @@ const styles: Record<string, S> = {
     background: "#fff",
     border: "1px solid var(--line)",
     borderRadius: 12,
-    padding: "8px 14px",
+    display: "flex",
+    alignItems: "stretch",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+    overflow: "hidden",
+  },
+  walletChip: {
     display: "flex",
     alignItems: "center",
     gap: 9,
-    whiteSpace: "nowrap",
-    flexShrink: 0,
+    padding: "8px 12px 8px 14px",
+  },
+  walletDisconnect: {
+    width: 30,
+    display: "grid",
+    placeItems: "center",
+    fontSize: 11,
+    color: "var(--mut)",
+    borderLeft: "1px solid var(--line)",
   },
   start: {
     width: 74,
@@ -679,6 +712,16 @@ const globalCss = `
 
   .ys-rail-dot:hover { transform: scale(1.06); }
   .ys-rail-dot:hover > span { opacity: 1 !important; }
+
+  /* onboarding active-step spinner: a small rotating blue arc inside the dot */
+  .ys-step-ring {
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid var(--blue-soft);
+    border-top-color: var(--blue);
+    display: inline-block;
+    animation: ys-spin 0.8s linear infinite;
+  }
+  @keyframes ys-spin { to { transform: rotate(360deg); } }
 
   button:hover:not(:disabled) { filter: brightness(0.97); }
   a[style]:hover { transform: translateY(-1px); }

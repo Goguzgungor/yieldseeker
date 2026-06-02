@@ -3,6 +3,7 @@
 // never imports server-only lib modules.
 
 export interface ApiScoredPool {
+  protocol: string; // yield source, e.g. "blend" | "defindex"
   poolId: string;
   name: string;
   asset: "USDC";

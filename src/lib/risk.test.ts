@@ -26,4 +26,12 @@ describe("scorePools", () => {
     const risky = scorePools([{ ...base, utilizationBps: 9500, tvlUsdc: 5_000_0000000n }], "balanced")[0];
     expect(risky.riskScore).toBeGreaterThan(safe.riskScore);
   });
+
+  it("explains WHY an over-tolerance pool is ineligible (score + dominant driver)", () => {
+    const risky = scorePools([{ ...base, utilizationBps: 9500, tvlUsdc: 5_000_0000000n }], "balanced")[0];
+    expect(risky.eligible).toBe(false);
+    // names the threshold breach and the utilization driver, not a bare label
+    expect(risky.reason).toMatch(/risk \d+ > 65/);
+    expect(risky.reason).toMatch(/high utilization 95%/);
+  });
 });
