@@ -1,13 +1,20 @@
 export type RiskTolerance = "conservative" | "balanced" | "aggressive";
 
 export interface PoolYield {
-  poolId: string;          // Blend pool contract id
+  protocol: string;        // yield source protocol, e.g. "blend" | "defindex"
+  poolId: string;          // pool / strategy contract id
   name: string;
   asset: "USDC";
   apyBps: number;          // total supply APY in basis points (e.g. 860 = 8.6%)
-  tvlUsdc: bigint;         // pool USDC TVL in stroops (7 decimals)
+  tvlUsdc: bigint;         // USDC TVL in stroops (7 decimals)
   utilizationBps: number;  // 0..10000
   oracleHealthy: boolean;  // false => flagged risky
+}
+
+/** One protocol's adapter: reads a pool/strategy id into a normalized PoolYield. */
+export interface YieldSource {
+  readonly protocol: string;
+  readPool(poolId: string): Promise<PoolYield | null>;
 }
 
 export interface ScoredPool extends PoolYield {

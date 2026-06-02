@@ -1,7 +1,39 @@
 import { describe, it, expect } from "vitest";
-import { scanYields, type RawReserve } from "./scanner";
+import { scanSource, createBlendSource, type RawReserve, type BlendReader } from "./scanner";
+import type { PoolYield, YieldSource } from "./types";
 
-const reader = {
+const fakeSource: YieldSource = {
+  protocol: "test",
+  async readPool(poolId) {
+    const map: Record<string, PoolYield> = {
+      C_A: { protocol: "test", poolId: "C_A", name: "A", asset: "USDC", apyBps: 860, tvlUsdc: 155_000_0000000n, utilizationBps: 6200, oracleHealthy: true },
+    };
+    return map[poolId] ?? null;
+  },
+};
+
+describe("scanSource", () => {
+  it("collects a PoolYield for each readable pool", async () => {
+    const out = await scanSource(fakeSource, ["C_A"]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ protocol: "test", poolId: "C_A", apyBps: 860 });
+  });
+
+  it("skips pools that return null or throw", async () => {
+    const flaky: YieldSource = {
+      protocol: "test",
+      async readPool(id) {
+        if (id === "BAD") throw new Error("rpc");
+        if (id === "NULL") return null;
+        return fakeSource.readPool(id);
+      },
+    };
+    const out = await scanSource(flaky, ["C_A", "BAD", "NULL"]);
+    expect(out.map((p) => p.poolId)).toEqual(["C_A"]);
+  });
+});
+
+const blendReader: BlendReader = {
   async readReserve(poolId: string): Promise<RawReserve> {
     const map: Record<string, RawReserve> = {
       C_A: { poolId: "C_A", name: "Fixed Pool", supplyApr: 0.086, totalSupplyUsdc: 155_000_0000000n, utilization: 0.62, oracleStale: false },
@@ -11,17 +43,13 @@ const reader = {
   },
 };
 
-describe("scanYields", () => {
-  it("maps reserves to PoolYield with bps APY and oracle health", async () => {
-    const out = await scanYields(reader, ["C_A", "C_B"]);
-    expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({ poolId: "C_A", apyBps: 860, oracleHealthy: true, utilizationBps: 6200 });
-    expect(out[1]).toMatchObject({ poolId: "C_B", apyBps: 940, oracleHealthy: false });
-  });
-
-  it("skips pools that fail to read instead of throwing", async () => {
-    const flaky = { async readReserve(id: string) { if (id === "BAD") throw new Error("rpc"); return reader.readReserve(id); } };
-    const out = await scanYields(flaky as any, ["C_A", "BAD"]);
-    expect(out.map((p) => p.poolId)).toEqual(["C_A"]);
+describe("createBlendSource", () => {
+  it("maps a Blend reserve to a protocol-tagged PoolYield", async () => {
+    const src = createBlendSource(blendReader);
+    expect(src.protocol).toBe("blend");
+    expect(await src.readPool("C_A")).toMatchObject({
+      protocol: "blend", poolId: "C_A", apyBps: 860, oracleHealthy: true, utilizationBps: 6200, tvlUsdc: 155_000_0000000n,
+    });
+    expect(await src.readPool("C_B")).toMatchObject({ protocol: "blend", poolId: "C_B", apyBps: 940, oracleHealthy: false });
   });
 });

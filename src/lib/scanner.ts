@@ -1,6 +1,6 @@
 import { PoolV2, TokenMetadata } from "@blend-capital/blend-sdk";
 import type { Network, Reserve } from "@blend-capital/blend-sdk";
-import type { PoolYield } from "./types";
+import type { PoolYield, YieldSource } from "./types";
 
 export interface RawReserve {
   poolId: string;
@@ -15,12 +15,28 @@ export interface BlendReader {
   readReserve(poolId: string): Promise<RawReserve>;
 }
 
-export async function scanYields(reader: BlendReader, poolIds: string[]): Promise<PoolYield[]> {
+export async function scanSource(source: YieldSource, poolIds: string[]): Promise<PoolYield[]> {
   const out: PoolYield[] = [];
   for (const id of poolIds) {
     try {
-      const r = await reader.readReserve(id);
-      out.push({
+      const py = await source.readPool(id);
+      if (py) out.push(py);
+    } catch {
+      // Skip unreadable pool; orchestrator logs the gap.
+    }
+  }
+  return out;
+}
+
+/** Wrap a Blend reserve reader as a YieldSource (maps RawReserve -> PoolYield). */
+export function createBlendSource(reader: BlendReader): YieldSource {
+  return {
+    protocol: "blend",
+    async readPool(poolId: string): Promise<PoolYield | null> {
+      const r = await reader.readReserve(poolId);
+      if (!r) return null;
+      return {
+        protocol: "blend",
         poolId: r.poolId,
         name: r.name,
         asset: "USDC",
@@ -28,12 +44,9 @@ export async function scanYields(reader: BlendReader, poolIds: string[]): Promis
         tvlUsdc: r.totalSupplyUsdc,
         utilizationBps: Math.round(r.utilization * 10000),
         oracleHealthy: !r.oracleStale,
-      });
-    } catch {
-      // Skip unreadable pool; orchestrator logs the gap.
-    }
-  }
-  return out;
+      };
+    },
+  };
 }
 
 /** Stale if oracle price is > 1 hour old */

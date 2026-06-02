@@ -3,8 +3,8 @@ import { decide, type LlmClient } from "./agent";
 import type { ScoredPool, Position } from "./types";
 
 const pools: ScoredPool[] = [
-  { poolId: "C_A", name: "A", asset: "USDC", apyBps: 820, tvlUsdc: 100_000_0000000n, utilizationBps: 5000, oracleHealthy: true, riskScore: 20, eligible: true },
-  { poolId: "C_B", name: "B", asset: "USDC", apyBps: 880, tvlUsdc: 100_000_0000000n, utilizationBps: 5200, oracleHealthy: true, riskScore: 22, eligible: true },
+  { protocol: "blend", poolId: "C_A", name: "A", asset: "USDC", apyBps: 820, tvlUsdc: 100_000_0000000n, utilizationBps: 5000, oracleHealthy: true, riskScore: 20, eligible: true },
+  { protocol: "blend", poolId: "C_B", name: "B", asset: "USDC", apyBps: 880, tvlUsdc: 100_000_0000000n, utilizationBps: 5200, oracleHealthy: true, riskScore: 22, eligible: true },
 ];
 const position: Position = { poolId: "C_A", amountUsdc: 1000_0000000n };
 

@@ -3,8 +3,8 @@ import { runTick, type TickDeps } from "./orchestrator";
 import type { PoolYield } from "./types";
 
 const pools: PoolYield[] = [
-  { poolId: "C_A", name: "A", asset: "USDC", apyBps: 820, tvlUsdc: 100_000_0000000n, utilizationBps: 5000, oracleHealthy: true },
-  { poolId: "C_B", name: "B", asset: "USDC", apyBps: 900, tvlUsdc: 100_000_0000000n, utilizationBps: 5000, oracleHealthy: true },
+  { protocol: "blend", poolId: "C_A", name: "A", asset: "USDC", apyBps: 820, tvlUsdc: 100_000_0000000n, utilizationBps: 5000, oracleHealthy: true },
+  { protocol: "blend", poolId: "C_B", name: "B", asset: "USDC", apyBps: 900, tvlUsdc: 100_000_0000000n, utilizationBps: 5000, oracleHealthy: true },
 ];
 
 function deps(over: Partial<TickDeps> = {}): TickDeps {

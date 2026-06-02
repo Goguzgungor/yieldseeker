@@ -21,6 +21,7 @@ export function serializePosition(p: Position): SerializedPosition {
  * reads APY/TVL/utilisation/risk/eligibility straight off these objects.
  */
 export interface SerializedScoredPool {
+  protocol: string;
   poolId: string;
   name: string;
   asset: "USDC";

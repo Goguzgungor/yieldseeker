@@ -3,6 +3,7 @@ import { scorePools } from "./risk";
 import type { PoolYield } from "./types";
 
 const base: PoolYield = {
+  protocol: "blend",
   poolId: "P", name: "x", asset: "USDC",
   apyBps: 800, tvlUsdc: 100_000_0000000n, utilizationBps: 5000, oracleHealthy: true,
 };

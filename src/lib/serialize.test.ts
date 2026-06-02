@@ -21,10 +21,12 @@ describe("serializePosition", () => {
 describe("serializeScoredPools", () => {
   const scored: ScoredPool[] = [
     {
+      protocol: "blend",
       poolId: "C_A", name: "A", asset: "USDC", apyBps: 820, tvlUsdc: 100_000_0000000n,
       utilizationBps: 5000, oracleHealthy: true, riskScore: 35, eligible: true,
     },
     {
+      protocol: "blend",
       poolId: "C_B", name: "B", asset: "USDC", apyBps: 444, tvlUsdc: 1_0000000n,
       utilizationBps: 9000, oracleHealthy: false, riskScore: 93, eligible: false,
       reason: "oracle unhealthy / flagged",
@@ -34,10 +36,12 @@ describe("serializeScoredPools", () => {
   it("renders each pool's BigInt tvlUsdc as a decimal string, preserving scoring fields", () => {
     expect(serializeScoredPools(scored)).toEqual([
       {
+        protocol: "blend",
         poolId: "C_A", name: "A", asset: "USDC", apyBps: 820, tvlUsdc: "1000000000000",
         utilizationBps: 5000, oracleHealthy: true, riskScore: 35, eligible: true,
       },
       {
+        protocol: "blend",
         poolId: "C_B", name: "B", asset: "USDC", apyBps: 444, tvlUsdc: "10000000",
         utilizationBps: 9000, oracleHealthy: false, riskScore: 93, eligible: false,
         reason: "oracle unhealthy / flagged",
