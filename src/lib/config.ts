@@ -53,9 +53,15 @@ const toStroops = (usdc: number) => BigInt(Math.round(usdc * 1e7));
 
 export function parseConfig(env: Record<string, string | undefined>) {
   const e = Schema.parse(env);
+  let defindexRaw: unknown;
+  try {
+    defindexRaw = JSON.parse(e.SCAN_DEFINDEX_STRATEGIES);
+  } catch {
+    throw new Error("SCAN_DEFINDEX_STRATEGIES must be valid JSON (an array of strategy objects)");
+  }
   const defindexStrategies = z
     .array(DefindexStrategySchema)
-    .parse(JSON.parse(e.SCAN_DEFINDEX_STRATEGIES))
+    .parse(defindexRaw)
     .map((s) => ({
       strategyId: s.strategyId,
       blendPoolId: s.blendPoolId,

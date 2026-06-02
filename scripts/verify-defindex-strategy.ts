@@ -2,15 +2,15 @@
 // Usage: npx tsx scripts/verify-defindex-strategy.ts
 // Probes the DeFindex USDC fixed-pool strategy on Stellar mainnet for a
 // no-arg, read-only getter returning total managed funds (i128 stroops).
-// NOTE: NULL_ACCOUNT was rejected as invalid; switched to Keypair.random().publicKey() per task instructions.
+// NOTE: Simulation source was rejected as invalid null account; switched to Keypair.random().publicKey() per task instructions.
 import { rpc, Contract, Account, TransactionBuilder, BASE_FEE, scValToNative, Keypair } from "@stellar/stellar-sdk";
 
 const RPC_URL = "https://mainnet.sorobanrpc.com";
 const PASSPHRASE = "Public Global Stellar Network ; September 2015";
 // DeFindex USDC fixed-pool strategy (re-validate against paltalabs/defindex mainnet.contracts.json)
 const STRATEGY_ID = "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP";
-// NULL_ACCOUNT was rejected; using a random ephemeral keypair instead (no funds needed for simulation).
-const NULL_ACCOUNT = Keypair.random().publicKey();
+// Simulation source: random ephemeral keypair (no funds needed for simulation).
+const SIM_SOURCE = Keypair.random().publicKey();
 const CANDIDATES = ["fetch_total_managed_funds", "total_managed_funds", "total_assets", "total_supply", "balance"];
 
 const server = new rpc.Server(RPC_URL);
@@ -18,7 +18,7 @@ const server = new rpc.Server(RPC_URL);
 async function tryGetter(fn: string) {
   try {
     const contract = new Contract(STRATEGY_ID);
-    const tx = new TransactionBuilder(new Account(NULL_ACCOUNT, "0"), { fee: BASE_FEE, networkPassphrase: PASSPHRASE })
+    const tx = new TransactionBuilder(new Account(SIM_SOURCE, "0"), { fee: BASE_FEE, networkPassphrase: PASSPHRASE })
       .addOperation(contract.call(fn))
       .setTimeout(30)
       .build();

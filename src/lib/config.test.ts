@@ -51,6 +51,10 @@ describe("parseConfig", () => {
     expect(c.scanDefindexStrategies).toEqual([]);
   });
 
+  it("throws a clear error when SCAN_DEFINDEX_STRATEGIES is malformed JSON", () => {
+    expect(() => parseConfig({ ...env, SCAN_DEFINDEX_STRATEGIES: "{not json" })).toThrow(/valid JSON/);
+  });
+
   it("parses DeFindex strategies from JSON and converts fallback TVL to stroops", () => {
     const c = parseConfig({
       ...env,
