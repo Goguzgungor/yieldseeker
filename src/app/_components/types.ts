@@ -15,6 +15,13 @@ export interface ApiScoredPool {
   reason?: string;
 }
 
+/** Shape returned by /api/scan */
+export interface ApiScanResponse {
+  pools: ApiScoredPool[];
+  /** Epoch-ms timestamp of the last persisted scan; null on a true cold start. */
+  updatedAt: number | null;
+}
+
 export interface ApiPosition {
   poolId: string | null;
   amountUsdc: string; // stroops, decimal string

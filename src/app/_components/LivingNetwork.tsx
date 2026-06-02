@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import NetworkGraph from "./NetworkGraph";
 import AnalysisPanel from "./AnalysisPanel";
 import { useLivingData } from "./useLivingData";
@@ -17,12 +17,33 @@ const RAIL = [
 
 const TICK_COUNT = 32;
 
+/** Returns a human-readable age string like "2m ago" or "just now". */
+function useAgeLabel(updatedAt: number | null): string {
+  const [label, setLabel] = useState("");
+  useEffect(() => {
+    if (updatedAt == null) { setLabel(""); return; }
+    const compute = () => {
+      const secs = Math.floor((Date.now() - updatedAt) / 1000);
+      if (secs < 10) return "just now";
+      if (secs < 60) return `${secs}s ago`;
+      const mins = Math.floor(secs / 60);
+      if (mins < 60) return `${mins}m ago`;
+      return `${Math.floor(mins / 60)}h ago`;
+    };
+    setLabel(compute());
+    const id = setInterval(() => setLabel(compute()), 15_000);
+    return () => clearInterval(id);
+  }, [updatedAt]);
+  return label;
+}
+
 export default function LivingNetwork() {
-  const { pools, position, activity, loading, scanning, connected, rescan } = useLivingData();
+  const { pools, scanUpdatedAt, position, activity, loading, scanning, connected, rescan } = useLivingData();
   const wallet = useFreighter();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const [addrInput, setAddrInput] = useState("");
+  const ageLabel = useAgeLabel(scanUpdatedAt);
 
   const selectedPool = useMemo(
     () => pools.find((p) => p.poolId === selectedId) ?? null,
@@ -91,7 +112,7 @@ export default function LivingNetwork() {
           {loading
             ? "Connecting to YieldSeeker…"
             : pools.length === 0
-              ? "Scanning Blend pools… (agent loop idle — start a scan)"
+              ? "First scan in progress — agent discovering Blend pools…"
               : `live network — agent watching ${pools.length} mainnet Blend pool${
                   pools.length === 1 ? "" : "s"
                 }`}
@@ -100,7 +121,10 @@ export default function LivingNetwork() {
         {/* ───────── stage / graph ───────── */}
         <div style={styles.stage}>
           {pools.length === 0 ? (
-            <EmptyStage loading={loading} idleUsdc={idleUsdc} />
+            // Show empty stage only on genuine cold start (no prior snapshot).
+            // If there IS a cached snapshot but pools still empty (corrupt/raced),
+            // fall through to NetworkGraph with empty array (renders nothing).
+            <EmptyStage loading={loading || scanUpdatedAt == null} idleUsdc={idleUsdc} />
           ) : (
             <NetworkGraph
               pools={pools}
@@ -127,6 +151,12 @@ export default function LivingNetwork() {
           <Stat label="Best APY" value={bestApy != null ? formatApy(bestApy) : "—"} />
           <Stat label="Idle USDC" value={loading ? "—" : idleUsdc} />
           <Stat label="Network" value={networkLabel(wallet.network) || "Stellar"} />
+          {ageLabel && (
+            <div style={styles.freshness}>
+              <span style={styles.freshnessLabel}>CACHE</span>
+              <span style={styles.freshnessValue}>{ageLabel}</span>
+            </div>
+          )}
 
           <form
             style={styles.addr}
@@ -238,7 +268,7 @@ function EmptyStage({ loading, idleUsdc }: { loading: boolean; idleUsdc: string 
         <div style={styles.centerName}>YIELDSEEKER AGENT</div>
         <div style={styles.centerAmt}>{idleUsdc} USDC idle</div>
         <div style={styles.centerHint}>
-          {loading ? "connecting…" : "scanning Blend pools…"}
+          {loading ? "first scan in progress…" : "awaiting first scan result…"}
         </div>
       </div>
     </div>
@@ -601,6 +631,24 @@ const styles: Record<string, S> = {
     transition: "transform 160ms ease, box-shadow 200ms ease",
   },
   startActive: { boxShadow: "0 0 0 6px var(--blue-soft)", background: "var(--blue)" },
+  freshness: {
+    background: "var(--chip)",
+    borderRadius: 12,
+    padding: "9px 14px",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 1,
+    flexShrink: 0,
+  },
+  freshnessLabel: {
+    fontSize: 9.5,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase" as const,
+    color: "var(--mut)",
+    fontWeight: 500,
+    fontFamily: "monospace",
+  },
+  freshnessValue: { fontSize: 13, fontWeight: 500, color: "var(--mut)", fontFamily: "monospace" },
 };
 
 const globalCss = `

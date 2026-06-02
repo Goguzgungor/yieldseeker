@@ -2,7 +2,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 import { parseConfig, type Config } from "./config";
 import { createDb, type Db } from "./db";
 import { createBlendReader, scanYields, type BlendReader } from "./scanner";
-import { createBlendOnchainPoolSource, createPoolDiscovery, type PoolDiscovery } from "./discovery";
+import { createBlendOnchainPoolSource, createPoolDiscovery, isDiscoveryCacheFresh, DISCOVERY_TTL_MS, type PoolDiscovery } from "./discovery";
 import { createSorobanClient, createExecutor, type Executor } from "./executor";
 import { createKeypairWallet } from "./wallet";
 import { createAnthropicLlm, decide, type LlmClient } from "./agent";
@@ -139,7 +139,9 @@ async function tick(rt: Runtime): Promise<void> {
         // Persist to DB so route handlers (which may run in a separate module
         // instance) can read the latest snapshot regardless of which process
         // writes vs. reads.
+        const scanAt = Date.now();
         rt.db.setKV("lastScan", JSON.stringify(serializeScoredPools(rt.lastScan)));
+        rt.db.setKV("lastScanAt", String(scanAt));
         return s;
       },
       tolerance: rt.cfg.tolerance,
@@ -180,32 +182,106 @@ async function tick(rt: Runtime): Promise<void> {
 }
 
 /**
+ * Persist a successful discovery result to the DB cache so future process
+ * restarts can skip the blocking on-chain fetch.
+ */
+function cacheDiscovery(rt: Runtime, poolIds: string[]): void {
+  rt.db.setKV("discoveredPools", JSON.stringify(poolIds));
+  rt.db.setKV("discoveredAt", String(Date.now()));
+}
+
+/**
+ * Read the cached discovery result from the DB, if any.
+ * Returns `{ poolIds, discoveredAt }` or `null` if no cache entry exists.
+ */
+function readDiscoveryCache(rt: Runtime): { poolIds: string[]; discoveredAt: number } | null {
+  const raw = rt.db.getKV("discoveredPools");
+  const atRaw = rt.db.getKV("discoveredAt");
+  if (!raw || !atRaw) return null;
+  try {
+    const poolIds = JSON.parse(raw) as string[];
+    const discoveredAt = Number(atRaw);
+    if (!Array.isArray(poolIds) || !Number.isFinite(discoveredAt)) return null;
+    return { poolIds, discoveredAt };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Start the continuous agent loop. Idempotent: only the first call starts it.
- * Resolves + caches the discovered pool ids once, logs discovery, runs one tick
- * immediately, then schedules `tick` every `scanIntervalSec`.
+ *
+ * Discovery strategy (fast startup):
+ *  - If the DB cache is fresh (within DISCOVERY_TTL_MS), use it immediately and
+ *    kick a background refresh without blocking startup.
+ *  - If the cache is stale but present, use the cached ids immediately (so the
+ *    first tick doesn't wait), then refresh in the background.
+ *  - If no cache exists, discover now (blocks briefly), cache the result.
+ *  - On-chain failure always falls back to cfg.scanBlendPoolIds.
+ *
+ * After discovery, runs one tick immediately then schedules ticks every
+ * `scanIntervalSec`.
  */
 export async function startLoop(): Promise<void> {
   const rt = getRuntime();
   if (rt.loopStarted) return;
   rt.loopStarted = true;
 
-  // Resolve the pool set once and cache it for the lifetime of the process.
-  try {
-    const discovered = await rt.poolDiscovery.discoverPoolIds();
-    rt.poolIds = discovered;
-    const fromOnchain = !arraysEqual(discovered, rt.cfg.scanBlendPoolIds);
+  const cached = readDiscoveryCache(rt);
+
+  if (cached) {
+    // Use cached ids immediately — no blocking RPC call.
+    rt.poolIds = cached.poolIds;
+    const fresh = isDiscoveryCacheFresh(cached.discoveredAt);
     rt.db.log(
       "discovery",
-      `discovered ${discovered.length} Blend pool(s) (${fromOnchain ? "on-chain" : "fallback"})`,
-      { poolIds: discovered, source: fromOnchain ? "onchain" : "fallback" },
+      `using ${cached.poolIds.length} cached pool id(s) (${fresh ? "fresh" : "stale — refreshing in background"})`,
+      { poolIds: cached.poolIds, source: "cache", discoveredAt: cached.discoveredAt },
     );
-  } catch (e) {
-    rt.poolIds = rt.cfg.scanBlendPoolIds;
-    rt.db.log(
-      "discovery",
-      `pool discovery failed, using ${rt.poolIds.length} fallback pool(s): ${(e as Error).message}`,
-      { poolIds: rt.poolIds, source: "fallback" },
-    );
+
+    // Refresh in the background (stale → priority; fresh → lower priority).
+    // Never let this block the tick loop.
+    void (async () => {
+      try {
+        const discovered = await rt.poolDiscovery.discoverPoolIds();
+        if (!arraysEqual(discovered, rt.poolIds ?? [])) {
+          rt.poolIds = discovered;
+          rt.db.log(
+            "discovery",
+            `background refresh: updated to ${discovered.length} pool id(s)`,
+            { poolIds: discovered, source: "onchain" },
+          );
+        }
+        cacheDiscovery(rt, discovered);
+      } catch (e) {
+        // Background refresh failure is non-fatal; cached ids remain in use.
+        rt.db.log(
+          "discovery",
+          `background refresh failed (cached ids remain): ${(e as Error).message}`,
+          { source: "fallback" },
+        );
+      }
+    })();
+  } else {
+    // No cache — discover now (blocking, but only on first-ever run).
+    try {
+      const discovered = await rt.poolDiscovery.discoverPoolIds();
+      rt.poolIds = discovered;
+      cacheDiscovery(rt, discovered);
+      const fromOnchain = !arraysEqual(discovered, rt.cfg.scanBlendPoolIds);
+      rt.db.log(
+        "discovery",
+        `discovered ${discovered.length} Blend pool(s) (${fromOnchain ? "on-chain" : "fallback"})`,
+        { poolIds: discovered, source: fromOnchain ? "onchain" : "fallback" },
+      );
+    } catch (e) {
+      rt.poolIds = rt.cfg.scanBlendPoolIds;
+      rt.db.log(
+        "discovery",
+        `pool discovery failed, using ${rt.poolIds.length} fallback pool(s): ${(e as Error).message}`,
+        { poolIds: rt.poolIds, source: "fallback" },
+      );
+    }
   }
 
   await tick(rt);
@@ -228,23 +304,37 @@ export function getRecentLog(n = 50) {
   return getRuntime().db.recentLog(n);
 }
 
+/** Shape returned by `/api/scan`. */
+export interface ScanSnapshot {
+  pools: SerializedScoredPool[];
+  /** Epoch-ms when the snapshot was last written; null on a true cold start. */
+  updatedAt: number | null;
+}
+
 /**
  * Most-recent SCORED scan — reads from the SQLite DB so it is consistent
  * regardless of which module instance (agent loop vs. route handler) calls it.
  * Falls back to the in-memory copy when the DB has no snapshot yet (e.g. very
  * first request before the first tick completes).
+ *
+ * Returns a {@link ScanSnapshot} with `updatedAt` so the UI can show how fresh
+ * the cached data is.
  */
-export function getLastScan(): SerializedScoredPool[] {
+export function getLastScan(): ScanSnapshot {
   const rt = getRuntime();
   const raw = rt.db.getKV("lastScan");
+  const atRaw = rt.db.getKV("lastScanAt");
+  const updatedAt = atRaw ? Number(atRaw) || null : null;
+
   if (raw) {
     try {
-      return JSON.parse(raw) as SerializedScoredPool[];
+      const pools = JSON.parse(raw) as SerializedScoredPool[];
+      return { pools, updatedAt };
     } catch {
       // corrupt entry; fall through to in-memory copy
     }
   }
-  return serializeScoredPools(rt.lastScan);
+  return { pools: serializeScoredPools(rt.lastScan), updatedAt };
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createPoolDiscovery, type PoolSource } from "./discovery";
+import { createPoolDiscovery, isDiscoveryCacheFresh, DISCOVERY_TTL_MS, type PoolSource } from "./discovery";
 
 const FALLBACK = ["C_FALLBACK_A", "C_FALLBACK_B"];
 
@@ -24,5 +24,51 @@ describe("createPoolDiscovery", () => {
   it("returns the fallback list when the source throws", async () => {
     const d = createPoolDiscovery(sourceThrowing(), FALLBACK);
     expect(await d.discoverPoolIds()).toEqual(FALLBACK);
+  });
+});
+
+describe("isDiscoveryCacheFresh", () => {
+  const NOW = 1_700_000_000_000; // arbitrary epoch-ms anchor
+
+  it("returns true when cache is younger than TTL", () => {
+    // 1 second old — well within TTL
+    expect(isDiscoveryCacheFresh(NOW - 1_000, NOW)).toBe(true);
+  });
+
+  it("returns true when cache is exactly 1ms before the TTL boundary", () => {
+    expect(isDiscoveryCacheFresh(NOW - DISCOVERY_TTL_MS + 1, NOW)).toBe(true);
+  });
+
+  it("returns false when cache is exactly at the TTL boundary (== ttl)", () => {
+    // age === TTL → NOT fresh (strictly less than)
+    expect(isDiscoveryCacheFresh(NOW - DISCOVERY_TTL_MS, NOW)).toBe(false);
+  });
+
+  it("returns false when cache is older than TTL", () => {
+    // 2× TTL old
+    expect(isDiscoveryCacheFresh(NOW - DISCOVERY_TTL_MS * 2, NOW)).toBe(false);
+  });
+
+  it("returns false when discoveredAtMs is null", () => {
+    expect(isDiscoveryCacheFresh(null, NOW)).toBe(false);
+  });
+
+  it("returns false when discoveredAtMs is undefined", () => {
+    expect(isDiscoveryCacheFresh(undefined, NOW)).toBe(false);
+  });
+
+  it("returns false when discoveredAtMs is 0", () => {
+    expect(isDiscoveryCacheFresh(0, NOW)).toBe(false);
+  });
+
+  it("returns false when discoveredAtMs is NaN", () => {
+    expect(isDiscoveryCacheFresh(NaN, NOW)).toBe(false);
+  });
+
+  it("respects a custom ttlMs override", () => {
+    const customTtl = 5_000; // 5 seconds
+    expect(isDiscoveryCacheFresh(NOW - 4_000, NOW, customTtl)).toBe(true);
+    expect(isDiscoveryCacheFresh(NOW - 5_000, NOW, customTtl)).toBe(false);
+    expect(isDiscoveryCacheFresh(NOW - 6_000, NOW, customTtl)).toBe(false);
   });
 });

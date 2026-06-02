@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ActivityEntry, ApiPosition, ApiScoredPool, SsePayload } from "./types";
+import type { ActivityEntry, ApiPosition, ApiScanResponse, ApiScoredPool, SsePayload } from "./types";
 
 export interface LivingData {
   pools: ApiScoredPool[];
+  /** Epoch-ms of the last persisted scan snapshot; null on cold first run. */
+  scanUpdatedAt: number | null;
   position: ApiPosition | null;
   activity: ActivityEntry[];
   loading: boolean;
@@ -25,8 +27,11 @@ async function getJson<T>(url: string): Promise<T | null> {
 
 export function useLivingData(): LivingData {
   const [pools, setPools] = useState<ApiScoredPool[]>([]);
+  const [scanUpdatedAt, setScanUpdatedAt] = useState<number | null>(null);
   const [position, setPosition] = useState<ApiPosition | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  // loading is true only while the very first fetch is in-flight.
+  // Once the fetch resolves (even with an empty snapshot), it becomes false.
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -34,8 +39,11 @@ export function useLivingData(): LivingData {
   const lastLogTs = useRef<number>(0);
 
   const refetchScan = useCallback(async () => {
-    const data = await getJson<ApiScoredPool[]>("/api/scan");
-    if (Array.isArray(data)) setPools(data);
+    const data = await getJson<ApiScanResponse>("/api/scan");
+    if (data && Array.isArray(data.pools)) {
+      setPools(data.pools);
+      setScanUpdatedAt(data.updatedAt ?? null);
+    }
   }, []);
 
   const refetchPosition = useCallback(async () => {
@@ -48,12 +56,15 @@ export function useLivingData(): LivingData {
     let cancelled = false;
     (async () => {
       const [scan, pos, act] = await Promise.all([
-        getJson<ApiScoredPool[]>("/api/scan"),
+        getJson<ApiScanResponse>("/api/scan"),
         getJson<ApiPosition>("/api/position"),
         getJson<ActivityEntry[]>("/api/activity"),
       ]);
       if (cancelled) return;
-      if (Array.isArray(scan)) setPools(scan);
+      if (scan && Array.isArray(scan.pools)) {
+        setPools(scan.pools);
+        setScanUpdatedAt(scan.updatedAt ?? null);
+      }
       if (pos) setPosition(pos);
       if (Array.isArray(act)) {
         setActivity(act);
@@ -129,5 +140,5 @@ export function useLivingData(): LivingData {
     void refetchPosition();
   }, [flashScanning, refetchScan, refetchPosition]);
 
-  return { pools, position, activity, loading, scanning, connected, rescan };
+  return { pools, scanUpdatedAt, position, activity, loading, scanning, connected, rescan };
 }

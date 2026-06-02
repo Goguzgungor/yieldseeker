@@ -1,6 +1,29 @@
 import { BackstopConfig, poolFactoryEventFromEventResponse } from "@blend-capital/blend-sdk";
 import { rpc } from "@stellar/stellar-sdk";
 
+/** Default TTL for the DB-cached pool-id list (60 minutes). */
+export const DISCOVERY_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Pure helper: returns `true` when the cached discovery result is still
+ * considered fresh.
+ *
+ * @param discoveredAtMs  Epoch-ms timestamp recorded when the pool ids were
+ *                        last fetched from the chain (or 0 / NaN / undefined
+ *                        when no cache exists yet).
+ * @param nowMs           Current epoch-ms (defaults to `Date.now()`).
+ * @param ttlMs           Maximum age before the cache is considered stale
+ *                        (defaults to {@link DISCOVERY_TTL_MS}).
+ */
+export function isDiscoveryCacheFresh(
+  discoveredAtMs: number | null | undefined,
+  nowMs = Date.now(),
+  ttlMs = DISCOVERY_TTL_MS,
+): boolean {
+  if (!discoveredAtMs || !Number.isFinite(discoveredAtMs)) return false;
+  return nowMs - discoveredAtMs < ttlMs;
+}
+
 /**
  * A source of Blend pool contract ids. Implementations may read on-chain state,
  * call an API, or return a static list. Kept tiny so it can be faked in tests

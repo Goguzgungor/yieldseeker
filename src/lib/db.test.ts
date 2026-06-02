@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { createDb } from "./db";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 
 describe("db", () => {
   it("persists position and appends activity log", () => {
@@ -45,5 +48,33 @@ describe("db", () => {
     expect(db.getKV("lastDecision")).toBe(decision);
     // Scan key still has its own value
     expect(db.getKV("lastScan")).toBe(updated);
+  });
+});
+
+describe("cross-instance kv round-trip (file-backed SQLite)", () => {
+  it("value written by one db handle is visible to a fresh handle on the same file", () => {
+    // Write to a temp file via one handle, then open a second handle and read.
+    const tmpFile = path.join(os.tmpdir(), `ys-test-${process.pid}-${Date.now()}.sqlite`);
+    try {
+      const poolIds = ["C_POOL_A", "C_POOL_B", "C_POOL_C"];
+      const serialized = JSON.stringify(poolIds);
+
+      // Writer: first db instance
+      const writer = createDb(tmpFile);
+      writer.setKV("discoveredPools", serialized);
+      writer.setKV("discoveredAt", String(Date.now()));
+
+      // Reader: fresh db instance on the same file (simulates process restart)
+      const reader = createDb(tmpFile);
+      const rawPools = reader.getKV("discoveredPools");
+      const rawAt = reader.getKV("discoveredAt");
+
+      expect(rawPools).toBe(serialized);
+      expect(JSON.parse(rawPools!)).toEqual(poolIds);
+      expect(rawAt).not.toBeNull();
+      expect(Number(rawAt)).toBeGreaterThan(0);
+    } finally {
+      try { fs.unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }
+    }
   });
 });
