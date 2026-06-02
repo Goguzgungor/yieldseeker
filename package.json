@@ -8,9 +8,13 @@
     "doc": "docs"
   },
   "scripts": {
-    "dev": "tsx src/index.ts",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "test": "vitest run",
-    "verify:blend": "tsx scripts/verify-blend-testnet.ts"
+    "verify:blend": "tsx scripts/verify-blend-testnet.ts",
+    "verify:blend-mainnet": "tsx scripts/verify-mainnet-scan.ts",
+    "verify:discovery": "tsx scripts/verify-pool-discovery.ts"
   },
   "keywords": [],
   "author": "",
@@ -23,12 +27,17 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "fastify": "^5.8.5",
+    "next": "^16.2.7",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.1",
+    "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"

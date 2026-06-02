@@ -15,7 +15,7 @@
  *   YieldBloxV2   = CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS
  */
 
-import { createBlendOnchainPoolSource, createPoolDiscovery } from "../src/discovery.js";
+import { createBlendOnchainPoolSource, createPoolDiscovery } from "../src/lib/discovery";
 
 const MAINNET_RPC = "https://mainnet.sorobanrpc.com";
 const MAINNET_PASSPHRASE = "Public Global Stellar Network ; September 2015";

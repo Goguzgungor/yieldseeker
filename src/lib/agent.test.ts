@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { decide, type LlmClient } from "./agent.js";
-import type { ScoredPool, Position } from "./types.js";
+import { decide, type LlmClient } from "./agent";
+import type { ScoredPool, Position } from "./types";
 
 const pools: ScoredPool[] = [
   { poolId: "C_A", name: "A", asset: "USDC", apyBps: 820, tvlUsdc: 100_000_0000000n, utilizationBps: 5000, oracleHealthy: true, riskScore: 20, eligible: true },

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createPoolDiscovery, type PoolSource } from "./discovery.js";
+import { createPoolDiscovery, type PoolSource } from "./discovery";
 
 const FALLBACK = ["C_FALLBACK_A", "C_FALLBACK_B"];
 

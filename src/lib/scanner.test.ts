@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scanYields, type RawReserve } from "./scanner.js";
+import { scanYields, type RawReserve } from "./scanner";
 
 const reader = {
   async readReserve(poolId: string): Promise<RawReserve> {

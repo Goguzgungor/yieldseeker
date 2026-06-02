@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { scorePools } from "./risk.js";
-import type { PoolYield } from "./types.js";
+import { scorePools } from "./risk";
+import type { PoolYield } from "./types";
 
 const base: PoolYield = {
   poolId: "P", name: "x", asset: "USDC",

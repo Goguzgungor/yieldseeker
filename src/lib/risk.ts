@@ -1,4 +1,4 @@
-import type { PoolYield, ScoredPool, RiskTolerance } from "./types.js";
+import type { PoolYield, ScoredPool, RiskTolerance } from "./types";
 
 const MIN_TVL: Record<RiskTolerance, bigint> = {
   conservative: 50_000_0000000n, // 50k USDC (conservative floor)

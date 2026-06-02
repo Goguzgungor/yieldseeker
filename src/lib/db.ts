@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import type { Position } from "./types.js";
+import type { Position } from "./types";
 
 export function createDb(path = "yieldseeker.sqlite") {
   const db = new Database(path);

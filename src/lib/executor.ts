@@ -1,8 +1,8 @@
 import { rpc, TransactionBuilder, BASE_FEE, Account, xdr as StellarXdr } from "@stellar/stellar-sdk";
 import { PoolContractV2, RequestType } from "@blend-capital/blend-sdk";
 import type { SubmitArgs, Request } from "@blend-capital/blend-sdk";
-import type { Wallet } from "./wallet.js";
-import type { TxResult } from "./types.js";
+import type { Wallet } from "./wallet";
+import type { TxResult } from "./types";
 
 export interface SorobanClient {
   buildBlendSubmit(poolId: string, kind: "withdraw" | "deposit", amount: bigint): Promise<string>; // unsigned xdr

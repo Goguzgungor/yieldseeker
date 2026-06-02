@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { runTick, type TickDeps } from "./orchestrator.js";
-import type { PoolYield } from "./types.js";
+import { runTick, type TickDeps } from "./orchestrator";
+import type { PoolYield } from "./types";
 
 const pools: PoolYield[] = [
   { poolId: "C_A", name: "A", asset: "USDC", apyBps: 820, tvlUsdc: 100_000_0000000n, utilizationBps: 5000, oracleHealthy: true },

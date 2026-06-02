@@ -1,5 +1,5 @@
-import { scorePools, bestPool } from "./risk.js";
-import type { PoolYield, Position, Decision, TxResult, RiskTolerance } from "./types.js";
+import { scorePools, bestPool } from "./risk";
+import type { PoolYield, Position, Decision, TxResult, RiskTolerance } from "./types";
 
 export interface TickDeps {
   scan: () => Promise<PoolYield[]>;

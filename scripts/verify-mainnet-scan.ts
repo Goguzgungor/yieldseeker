@@ -14,7 +14,7 @@
  * Mainnet RPC: https://mainnet.sorobanrpc.com  (confirmed healthy, ledger ~62845982)
  */
 
-import { createBlendReader, scanYields } from "../src/scanner.js";
+import { createBlendReader, scanYields } from "../src/lib/scanner";
 
 const MAINNET_RPC = "https://mainnet.sorobanrpc.com";
 const MAINNET_PASSPHRASE = "Public Global Stellar Network ; September 2015";

@@ -1,6 +1,6 @@
 import { PoolV2, TokenMetadata } from "@blend-capital/blend-sdk";
 import type { Network, Reserve } from "@blend-capital/blend-sdk";
-import type { PoolYield } from "./types.js";
+import type { PoolYield } from "./types";
 
 export interface RawReserve {
   poolId: string;

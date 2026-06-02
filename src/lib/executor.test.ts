@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createExecutor, type SorobanClient } from "./executor.js";
+import { createExecutor, type SorobanClient } from "./executor";
 
 function fakeClient(): SorobanClient {
   return {

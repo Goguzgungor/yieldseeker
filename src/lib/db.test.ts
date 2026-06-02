@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createDb } from "./db.js";
+import { createDb } from "./db";
 
 describe("db", () => {
   it("persists position and appends activity log", () => {

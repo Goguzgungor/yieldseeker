@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseConfig } from "./config.js";
+import { parseConfig } from "./config";
 
 const env = {
   ANTHROPIC_API_KEY: "k", ANTHROPIC_MODEL: "claude-sonnet-4-6",

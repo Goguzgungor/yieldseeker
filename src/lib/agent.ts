@@ -1,6 +1,6 @@
 import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
-import type { ScoredPool, Position, Decision, RiskTolerance } from "./types.js";
+import type { ScoredPool, Position, Decision, RiskTolerance } from "./types";
 
 export interface ToolDef { name: string; description: string; schema: object; validate: (raw: unknown) => any; }
 export interface LlmClient {

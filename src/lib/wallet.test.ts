@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createKeypairWallet } from "./wallet.js";
+import { createKeypairWallet } from "./wallet";
 import { Keypair, TransactionBuilder, Account, Operation, BASE_FEE, Networks } from "@stellar/stellar-sdk";
 
 describe("wallet (keypair signer)", () => {
