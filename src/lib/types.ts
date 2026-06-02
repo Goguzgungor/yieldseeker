@@ -28,6 +28,21 @@ export interface Position {
   amountUsdc: bigint;      // stroops
 }
 
+/**
+ * A registered per-user smart account (ARMA model). The backend agent is an
+ * External ed25519 policy signer on `smartWallet` under two context rules:
+ *   - `poolRuleId`: CallContract(POOL) — Blend pool method calls
+ *   - `usdcRuleId`: CallContract(USDC) — capped by the spending-limit policy
+ * `owner` is the user's classic G-address (the Default-rule owner signer).
+ */
+export interface UserRegistration {
+  owner: string;
+  smartWallet: string;
+  poolRuleId: number;
+  usdcRuleId: number;
+  createdAt: number; // epoch seconds
+}
+
 export interface Decision {
   action: "hold" | "rebalance";
   toPool?: string;

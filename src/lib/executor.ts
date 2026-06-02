@@ -5,6 +5,9 @@ import type { Wallet } from "./wallet";
 import type { TxResult } from "./types";
 
 export interface SorobanClient {
+  /** Build the bare Blend `pool.submit` operation (base64 op XDR). */
+  buildBlendOp(poolId: string, kind: "withdraw" | "deposit", amount: bigint): Promise<string>;
+  /** Wrap a bare op into an unsigned tx envelope (keypair-mode path). */
   buildBlendSubmit(poolId: string, kind: "withdraw" | "deposit", amount: bigint): Promise<string>; // unsigned xdr
   simulate(xdr: string): Promise<{ ok: boolean; error?: string }>;
   submit(signedXdr: string): Promise<{ hash: string; success: boolean; error?: string }>;
@@ -12,6 +15,18 @@ export interface SorobanClient {
 
 export function createExecutor(client: SorobanClient, wallet: Wallet) {
   async function step(poolId: string, kind: "withdraw" | "deposit", amount: bigint): Promise<string> {
+    // Smart-account (policy-signer) fast-path: the wallet owns the whole
+    // two-pass simulate + AuthPayload build + sign + submit round-trip, because
+    // the __check_auth footprint can only be discovered AFTER the SA auth entry
+    // is signed. The keypair wallet does not implement submitOp, so it falls
+    // through to the legacy simulate → signXdr → submit path below.
+    if (wallet.submitOp) {
+      const op = await client.buildBlendOp(poolId, kind, amount);
+      const res = await wallet.submitOp(op);
+      if (!res.success) throw new Error(`${kind} submit failed: ${res.error ?? "unknown"}`);
+      return res.hashes[res.hashes.length - 1];
+    }
+
     const xdr = await client.buildBlendSubmit(poolId, kind, amount);
     const sim = await client.simulate(xdr);
     if (!sim.ok) throw new Error(`${kind} simulate failed: ${sim.error ?? "unknown"}`);
@@ -49,7 +64,8 @@ export type Executor = ReturnType<typeof createExecutor>;
  * Confirmed SDK API:
  *   - RequestType enum (pool/index.d.ts):
  *       Supply=0, Withdraw=1, SupplyCollateral=2, WithdrawCollateral=3, Borrow=4, Repay=5, ...
- *     We use Supply(0)/Withdraw(1) for non-collateral lending positions.
+ *     We use SupplyCollateral(2)/WithdrawCollateral(3) — the exact request types
+ *     proven against our own deployed pool (deploy-verify-supply.ts).
  *
  *   - PoolContractV2 (pool_contract.d.ts):
  *       new PoolContractV2(address: string)
@@ -72,26 +88,34 @@ export function createSorobanClient(opts: {
 }): SorobanClient {
   const server = new rpc.Server(opts.rpcUrl, { allowHttp: opts.rpcUrl.startsWith("http://") });
 
+  /** Build the bare Blend `pool.submit` operation (base64 op XDR). */
+  function buildBlendOp(poolId: string, kind: "withdraw" | "deposit", amount: bigint): string {
+    const poolContract = new PoolContractV2(poolId);
+
+    const request: Request = {
+      // SupplyCollateral(2) for deposit (matches the proven supply against our
+      // own pool — deploy-verify-supply.ts), WithdrawCollateral(3) to unwind it.
+      request_type: kind === "deposit" ? RequestType.SupplyCollateral : RequestType.WithdrawCollateral,
+      address: opts.usdcId,
+      amount,
+    };
+
+    const submitArgs: SubmitArgs = {
+      from: opts.walletAddress,
+      spender: opts.walletAddress,
+      to: opts.walletAddress,
+      requests: [request],
+    };
+
+    // submit() returns a base64-encoded operation XDR string (confirmed from pool_contract.d.ts)
+    return poolContract.submit(submitArgs);
+  }
+
   return {
+    buildBlendOp: async (poolId, kind, amount) => buildBlendOp(poolId, kind, amount),
+
     async buildBlendSubmit(poolId, kind, amount) {
-      const poolContract = new PoolContractV2(poolId);
-
-      const request: Request = {
-        // Supply(0) for deposit, Withdraw(1) for non-collateral withdrawal
-        request_type: kind === "deposit" ? RequestType.Supply : RequestType.Withdraw,
-        address: opts.usdcId,
-        amount,
-      };
-
-      const submitArgs: SubmitArgs = {
-        from: opts.walletAddress,
-        spender: opts.walletAddress,
-        to: opts.walletAddress,
-        requests: [request],
-      };
-
-      // submit() returns a base64-encoded operation XDR string (confirmed from pool_contract.d.ts)
-      const opBase64: string = poolContract.submit(submitArgs);
+      const opBase64 = buildBlendOp(poolId, kind, amount);
 
       const source = await server.getAccount(opts.walletAddress);
       const tx = new TransactionBuilder(

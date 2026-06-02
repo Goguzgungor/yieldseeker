@@ -3,6 +3,7 @@ import { createExecutor, type SorobanClient } from "./executor";
 
 function fakeClient(): SorobanClient {
   return {
+    buildBlendOp: vi.fn(async (poolId, kind, amount) => `OP:${kind}:${poolId}:${amount}`),
     buildBlendSubmit: vi.fn(async (poolId, kind, amount) => `XDR:${kind}:${poolId}:${amount}`),
     simulate: vi.fn(async () => ({ ok: true })),
     submit: vi.fn(async (xdr: string) => ({ hash: "h:" + xdr, success: true })),

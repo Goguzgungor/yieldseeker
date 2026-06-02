@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { runTick, type TickDeps } from "./orchestrator";
-import type { PoolYield } from "./types";
+import { runTick, runPerUserExecution, type TickDeps, type PerUserDeps } from "./orchestrator";
+import type { PoolYield, Position, UserRegistration } from "./types";
 
 const pools: PoolYield[] = [
   { protocol: "blend", poolId: "C_A", name: "A", asset: "USDC", apyBps: 820, tvlUsdc: 100_000_0000000n, utilizationBps: 5000, oracleHealthy: true },
@@ -66,5 +66,97 @@ describe("runTick guards", () => {
     expect(d.commitPosition).toHaveBeenCalledWith({ poolId: "C_B", amountUsdc: 1000_0000000n });
     expect(r.acted).toBe(true);
     expect(r.reason).toBe("deposited");
+  });
+});
+
+// ── Per-user execution (ARMA model) ──────────────────────────────────────────
+
+function user(owner: string, smartWallet: string): UserRegistration {
+  return { owner, smartWallet, poolRuleId: 1, usdcRuleId: 2, createdAt: 0 };
+}
+
+function perUserDeps(over: Partial<PerUserDeps> = {}): PerUserDeps {
+  const positions = new Map<string, Position>();
+  return {
+    users: [user("G_A", "C_SA_A"), user("G_B", "C_SA_B")],
+    execPoolId: "C_EXEC",
+    supplyForUser: vi.fn(async () => ({ hashes: ["hx"], success: true })),
+    getUserPosition: (sw) => positions.get(sw) ?? { poolId: null, amountUsdc: 0n },
+    setUserPosition: vi.fn((sw, p) => positions.set(sw, p)),
+    idleUsdcForUser: vi.fn(async () => 500_0000000n),
+    log: vi.fn(),
+    perTxCapStroops: 2000_0000000n,
+    ...over,
+  };
+}
+
+describe("runPerUserExecution (ARMA per-user)", () => {
+  it("no-ops (no supply attempted) when there are no registered users", async () => {
+    const d = perUserDeps({ users: [] });
+    const r = await runPerUserExecution(d, "C_BEST");
+    expect(r).toEqual({ attempted: 0, supplied: 0, hashes: [] });
+    expect(d.supplyForUser).not.toHaveBeenCalled();
+  });
+
+  it("supplies each user's idle USDC into the exec pool and records position", async () => {
+    const d = perUserDeps();
+    const r = await runPerUserExecution(d, "C_BEST");
+    expect(r.attempted).toBe(2);
+    expect(r.supplied).toBe(2);
+    expect(d.supplyForUser).toHaveBeenCalledTimes(2);
+    // Each user supplies min(idle=500, cap=2000) = 500 USDC.
+    expect(d.supplyForUser).toHaveBeenCalledWith(expect.objectContaining({ owner: "G_A" }), 500_0000000n);
+    expect(d.setUserPosition).toHaveBeenCalledWith("C_SA_A", { poolId: "C_EXEC", amountUsdc: 500_0000000n });
+  });
+
+  it("caps the supplied amount at perTxCapStroops", async () => {
+    const d = perUserDeps({
+      users: [user("G_A", "C_SA_A")],
+      idleUsdcForUser: vi.fn(async () => 10_000_0000000n), // 10k idle
+      perTxCapStroops: 2000_0000000n,
+    });
+    await runPerUserExecution(d, null);
+    expect(d.supplyForUser).toHaveBeenCalledWith(expect.anything(), 2000_0000000n);
+  });
+
+  it("skips users with no idle USDC (no supply attempted)", async () => {
+    const supplyForUser = vi.fn(async () => ({ hashes: ["hx"], success: true }));
+    const d = perUserDeps({
+      users: [user("G_A", "C_SA_A"), user("G_B", "C_SA_B")],
+      idleUsdcForUser: vi.fn(async (u) => (u.owner === "G_A" ? 0n : 300_0000000n)),
+      supplyForUser,
+    });
+    const r = await runPerUserExecution(d, "C_BEST");
+    expect(r.attempted).toBe(1);
+    expect(r.supplied).toBe(1);
+    expect(supplyForUser).toHaveBeenCalledTimes(1);
+    expect(supplyForUser).toHaveBeenCalledWith(expect.objectContaining({ owner: "G_B" }), 300_0000000n);
+  });
+
+  it("one user's failure does not abort the others", async () => {
+    const supplyForUser = vi.fn(async (u: UserRegistration) =>
+      u.owner === "G_A"
+        ? { hashes: [] as string[], success: false, error: "policy reject" }
+        : { hashes: ["ok"], success: true },
+    );
+    const d = perUserDeps({ supplyForUser });
+    const r = await runPerUserExecution(d, "C_BEST");
+    expect(r.attempted).toBe(2);
+    expect(r.supplied).toBe(1); // only G_B landed
+    expect(r.hashes).toEqual(["ok"]);
+    // The failing user's position is NOT committed.
+    expect(d.setUserPosition).toHaveBeenCalledTimes(1);
+    expect(d.setUserPosition).toHaveBeenCalledWith("C_SA_B", expect.anything());
+  });
+
+  it("accumulates onto an existing exec-pool position", async () => {
+    const positions = new Map<string, Position>([["C_SA_A", { poolId: "C_EXEC", amountUsdc: 100_0000000n }]]);
+    const d = perUserDeps({
+      users: [user("G_A", "C_SA_A")],
+      getUserPosition: (sw) => positions.get(sw) ?? { poolId: null, amountUsdc: 0n },
+      idleUsdcForUser: vi.fn(async () => 50_0000000n),
+    });
+    await runPerUserExecution(d, "C_BEST");
+    expect(d.setUserPosition).toHaveBeenCalledWith("C_SA_A", { poolId: "C_EXEC", amountUsdc: 150_0000000n });
   });
 });

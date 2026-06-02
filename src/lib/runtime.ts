@@ -1,14 +1,25 @@
-import { Keypair } from "@stellar/stellar-sdk";
+import {
+  Keypair,
+  Address,
+  BASE_FEE,
+  Contract,
+  nativeToScVal,
+  rpc,
+  scValToNative,
+  TransactionBuilder,
+} from "@stellar/stellar-sdk";
+import { z } from "zod";
 import { parseConfig, type Config } from "./config";
 import { createDb, type Db } from "./db";
 import { createBlendReader, createBlendSource, scanSource } from "./scanner";
 import { createDefindexSource } from "./defindex";
 import { createBlendOnchainPoolSource, createPoolDiscovery, isDiscoveryCacheFresh, DISCOVERY_TTL_MS, type PoolDiscovery } from "./discovery";
 import { createSorobanClient, createExecutor, type Executor } from "./executor";
-import { createKeypairWallet } from "./wallet";
+import { createKeypairWallet, createPolicySignerWallet } from "./wallet";
 import { createAnthropicLlm, decide, type LlmClient } from "./agent";
-import { runTick } from "./orchestrator";
+import { runTick, runPerUserExecution } from "./orchestrator";
 import { scorePools } from "./risk";
+import type { UserRegistration, TxResult } from "./types";
 import {
   serializePosition,
   serializeScoredPools,
@@ -41,6 +52,10 @@ export interface Runtime {
   defindexSource: YieldSource | null;
   poolDiscovery: PoolDiscovery;
   executor: Executor;
+  /** Backend agent keypair (the External ed25519 policy signer for every user). */
+  agentKeypair: Keypair;
+  /** Shared testnet RPC server for exec-side reads (USDC balances) + per-user txs. */
+  execServer: rpc.Server;
   llm: LlmClient;
   /**
    * Most recent SCORED scan result (riskScore/eligible/reason populated;
@@ -101,7 +116,14 @@ export function getRuntime(): Runtime {
   const poolDiscovery = createPoolDiscovery(poolSource, cfg.scanBlendPoolIds);
 
   // Exec side: testnet signer + client (real txs, no real money).
-  const wallet = createKeypairWallet(Keypair.fromSecret(cfg.agentSignerSecret), cfg.execNetworkPassphrase);
+  const agentKeypair = Keypair.fromSecret(cfg.agentSignerSecret);
+  const execServer = new rpc.Server(cfg.execRpcUrl, {
+    allowHttp: cfg.execRpcUrl.startsWith("http://"),
+  });
+  // Legacy single-wallet executor (keypair mode): the agent signs as itself and
+  // supplies into SMART_WALLET_ADDRESS. In smart-account mode this executor is
+  // unused — per-user executors are built per tick from the registry.
+  const wallet = createKeypairWallet(agentKeypair, cfg.execNetworkPassphrase);
   const soroban = createSorobanClient({
     rpcUrl: cfg.execRpcUrl,
     networkPassphrase: cfg.execNetworkPassphrase,
@@ -118,6 +140,8 @@ export function getRuntime(): Runtime {
     defindexSource,
     poolDiscovery,
     executor,
+    agentKeypair,
+    execServer,
     llm,
     lastScan: [],
     lastDecision: null,
@@ -130,12 +154,76 @@ export function getRuntime(): Runtime {
   return runtime;
 }
 
+/**
+ * Read a smart wallet's USDC balance (stroops) via the USDC SAC `balance(addr)`
+ * read-only simulation. The agent key is only the (free) simulation source — no
+ * signing. Returns 0n on any error so a single unreadable account can't abort
+ * the per-user loop.
+ */
+async function readUsdcBalance(rt: Runtime, who: string): Promise<bigint> {
+  try {
+    const src = await rt.execServer.getAccount(rt.agentKeypair.publicKey());
+    const tx = new TransactionBuilder(src, {
+      fee: BASE_FEE,
+      networkPassphrase: rt.cfg.execNetworkPassphrase,
+    })
+      .addOperation(
+        new Contract(rt.cfg.execUsdcContractId).call(
+          "balance",
+          nativeToScVal(Address.fromString(who), { type: "address" }),
+        ),
+      )
+      .setTimeout(30)
+      .build();
+    const sim = await rt.execServer.simulateTransaction(tx);
+    if (rpc.Api.isSimulationError(sim)) return 0n;
+    const retval = (sim as rpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) return 0n;
+    return BigInt(scValToNative(retval).toString());
+  } catch {
+    return 0n;
+  }
+}
+
+/**
+ * Build the per-user supply function: a policy-signer wallet for THIS user's
+ * smart account (signing under their pool + USDC rule ids) wired into an
+ * executor whose Blend `from/spender/to` is the user's smart wallet. Supplies
+ * `amount` stroops of USDC into the exec pool via `SupplyCollateral`.
+ */
+function supplyForUser(rt: Runtime, user: UserRegistration, amount: bigint): Promise<TxResult> {
+  const wallet = createPolicySignerWallet({
+    smartWalletId: user.smartWallet,
+    agentKeypair: rt.agentKeypair,
+    rpcUrl: rt.cfg.execRpcUrl,
+    networkPassphrase: rt.cfg.execNetworkPassphrase,
+    verifier: rt.cfg.ed25519VerifierId,
+    // Present both rule ids: pool.submit (root CallContract(POOL)) + nested
+    // USDC.transfer (CallContract(USDC), spending-capped).
+    contextRuleIds: [user.poolRuleId, user.usdcRuleId],
+    server: rt.execServer,
+  });
+  const client = createSorobanClient({
+    rpcUrl: rt.cfg.execRpcUrl,
+    networkPassphrase: rt.cfg.execNetworkPassphrase,
+    walletAddress: user.smartWallet, // funds move FROM the smart wallet
+    usdcId: rt.cfg.execUsdcContractId,
+  });
+  return createExecutor(client, wallet).deposit(rt.cfg.execPoolId, amount);
+}
+
 /** One scan→score→decide→execute cycle. Mirrors the old index.ts loop body. */
 async function tick(rt: Runtime): Promise<void> {
   if (rt.running) return; // idempotency: never overlap ticks
   rt.running = true;
   try {
     const now = Math.floor(Date.now() / 1000);
+    const perUser = rt.cfg.walletMode === "smart-account";
+    // In smart-account mode the legacy single-keypair-wallet execution is a
+    // no-op: the real action is the PER-USER loop below (each user's own smart
+    // account). We still run scan+score+decide ONCE here (it caches lastScan /
+    // lastDecision for the UI and yields the chosen pool).
+    const noopExec = async (): Promise<TxResult> => ({ hashes: [], success: true });
     const r = await runTick({
       scan: async () => {
         const poolIds = rt.poolIds && rt.poolIds.length ? rt.poolIds : rt.cfg.scanBlendPoolIds;
@@ -174,8 +262,11 @@ async function tick(rt: Runtime): Promise<void> {
       },
       // Execution always targets the single testnet exec pool regardless of which
       // mainnet pool had the best yield — multi-pool exec is future work.
-      rebalance: (_fromMainnet, _toMainnet, a) => rt.executor.deposit(rt.cfg.execPoolId, a),
-      deposit: (_chosenMainnetPool, a) => rt.executor.deposit(rt.cfg.execPoolId, a),
+      // In smart-account mode these are no-ops (per-user loop does the work).
+      rebalance: (_fromMainnet, _toMainnet, a) =>
+        perUser ? noopExec() : rt.executor.deposit(rt.cfg.execPoolId, a),
+      deposit: (_chosenMainnetPool, a) =>
+        perUser ? noopExec() : rt.executor.deposit(rt.cfg.execPoolId, a),
       commitPosition: (p) => rt.db.setPosition(p),
       log: (k, m, meta) => rt.db.log(k, m, meta),
       recordRebalance: (a) => rt.db.recordRebalance(a),
@@ -188,6 +279,28 @@ async function tick(rt: Runtime): Promise<void> {
       now,
     });
     if (r.acted) rt.lastRebalanceAt = now;
+
+    // ── PER-USER execution (ARMA model) ──────────────────────────────────────
+    // The decision was made ONCE above; now supply each registered user's idle
+    // USDC into the chosen exec pool via THEIR smart account. No-op (beyond
+    // scan/decide) when there are no registered users.
+    if (perUser) {
+      const chosenPoolId = rt.lastDecision?.chosenPoolId ?? null;
+      const result = await runPerUserExecution(
+        {
+          users: rt.db.listUsers(),
+          execPoolId: rt.cfg.execPoolId,
+          supplyForUser: (user, amount) => supplyForUser(rt, user, amount),
+          getUserPosition: (sw) => rt.db.getUserPosition(sw),
+          setUserPosition: (sw, p) => rt.db.setUserPosition(sw, p),
+          idleUsdcForUser: (user) => readUsdcBalance(rt, user.smartWallet),
+          log: (k, m, meta) => rt.db.log(k, m, meta),
+          perTxCapStroops: rt.cfg.perTxCapStroops,
+        },
+        chosenPoolId,
+      );
+      if (result.supplied > 0) rt.lastRebalanceAt = now;
+    }
   } catch (e) {
     rt.db.log("error", `tick failed: ${(e as Error).message}`);
   } finally {
@@ -316,6 +429,55 @@ export function getSerializedPosition(): SerializedPosition {
 
 export function getRecentLog(n = 50) {
   return getRuntime().db.recentLog(n);
+}
+
+// ── Per-user registry accessors (ARMA model) ─────────────────────────────────
+
+/** Zod shape for `POST /api/register` bodies. */
+export const RegisterInput = z.object({
+  owner: z.string().min(1),
+  smartWallet: z.string().min(1),
+  poolRuleId: z.coerce.number().int().nonnegative(),
+  usdcRuleId: z.coerce.number().int().nonnegative(),
+});
+export type RegisterInputT = z.infer<typeof RegisterInput>;
+
+/** Register (upsert) a user's smart account + agent rule ids; returns the row. */
+export function registerUser(input: RegisterInputT): UserRegistration {
+  const rt = getRuntime();
+  const reg: UserRegistration = {
+    owner: input.owner,
+    smartWallet: input.smartWallet,
+    poolRuleId: input.poolRuleId,
+    usdcRuleId: input.usdcRuleId,
+    createdAt: Math.floor(Date.now() / 1000),
+  };
+  rt.db.registerUser(reg);
+  rt.db.log("register", `registered user ${reg.owner.slice(0, 8)}… → SA ${reg.smartWallet}`, {
+    smartWallet: reg.smartWallet,
+    poolRuleId: reg.poolRuleId,
+    usdcRuleId: reg.usdcRuleId,
+  });
+  return reg;
+}
+
+/** All registered users, each with their current per-user position (serialized). */
+export function listUsers(): Array<UserRegistration & { position: SerializedPosition }> {
+  const rt = getRuntime();
+  return rt.db.listUsers().map((u) => ({
+    ...u,
+    position: serializePosition(rt.db.getUserPosition(u.smartWallet)),
+  }));
+}
+
+/** One user's registration + position by owner, or null if not registered. */
+export function getUserWithPosition(
+  owner: string,
+): (UserRegistration & { position: SerializedPosition }) | null {
+  const rt = getRuntime();
+  const u = rt.db.getUser(owner);
+  if (!u) return null;
+  return { ...u, position: serializePosition(rt.db.getUserPosition(u.smartWallet)) };
 }
 
 /** Shape returned by `/api/scan`. */

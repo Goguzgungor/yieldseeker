@@ -51,6 +51,45 @@ describe("db", () => {
   });
 });
 
+describe("db users registry (ARMA per-user)", () => {
+  it("registers, lists (oldest first), and looks up users by owner", () => {
+    const db = createDb(":memory:");
+    expect(db.listUsers()).toEqual([]);
+    expect(db.getUser("G_NONE")).toBeNull();
+
+    db.registerUser({ owner: "G_A", smartWallet: "C_SA_A", poolRuleId: 1, usdcRuleId: 2, createdAt: 100 });
+    db.registerUser({ owner: "G_B", smartWallet: "C_SA_B", poolRuleId: 3, usdcRuleId: 4, createdAt: 200 });
+
+    const all = db.listUsers();
+    expect(all.map((u) => u.owner)).toEqual(["G_A", "G_B"]); // createdAt ASC
+    expect(db.getUser("G_B")).toEqual({
+      owner: "G_B", smartWallet: "C_SA_B", poolRuleId: 3, usdcRuleId: 4, createdAt: 200,
+    });
+  });
+
+  it("upserts on owner conflict (re-register updates wallet + rule ids)", () => {
+    const db = createDb(":memory:");
+    db.registerUser({ owner: "G_A", smartWallet: "C_OLD", poolRuleId: 1, usdcRuleId: 2, createdAt: 100 });
+    db.registerUser({ owner: "G_A", smartWallet: "C_NEW", poolRuleId: 5, usdcRuleId: 6, createdAt: 100 });
+    expect(db.listUsers()).toHaveLength(1);
+    expect(db.getUser("G_A")).toMatchObject({ smartWallet: "C_NEW", poolRuleId: 5, usdcRuleId: 6 });
+  });
+
+  it("stores + reads per-user positions keyed by smart wallet", () => {
+    const db = createDb(":memory:");
+    // Unset → idle
+    expect(db.getUserPosition("C_SA_A")).toEqual({ poolId: null, amountUsdc: 0n });
+    db.setUserPosition("C_SA_A", { poolId: "C_POOL", amountUsdc: 500_0000000n });
+    db.setUserPosition("C_SA_B", { poolId: "C_POOL", amountUsdc: 12_0000000n });
+    expect(db.getUserPosition("C_SA_A")).toEqual({ poolId: "C_POOL", amountUsdc: 500_0000000n });
+    // Independent key unaffected
+    expect(db.getUserPosition("C_SA_B").amountUsdc).toBe(12_0000000n);
+    // Overwrite
+    db.setUserPosition("C_SA_A", { poolId: "C_POOL", amountUsdc: 900_0000000n });
+    expect(db.getUserPosition("C_SA_A").amountUsdc).toBe(900_0000000n);
+  });
+});
+
 describe("cross-instance kv round-trip (file-backed SQLite)", () => {
   it("value written by one db handle is visible to a fresh handle on the same file", () => {
     // Write to a temp file via one handle, then open a second handle and read.

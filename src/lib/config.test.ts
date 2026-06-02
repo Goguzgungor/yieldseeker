@@ -33,6 +33,27 @@ describe("parseConfig", () => {
     expect(c.scanBackstopId).toBe("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7");
   });
 
+  it("defaults WALLET_MODE to smart-account and parses keypair override", () => {
+    expect(parseConfig(env).walletMode).toBe("smart-account");
+    expect(parseConfig({ ...env, WALLET_MODE: "keypair" }).walletMode).toBe("keypair");
+    expect(() => parseConfig({ ...env, WALLET_MODE: "bogus" })).toThrow();
+  });
+
+  it("defaults the OZ verifier + spending-policy ids (proven testnet) when omitted", () => {
+    const c = parseConfig(env);
+    expect(c.ed25519VerifierId).toBe("CBHJOANTAHF2ZKU5HZRZTWP4GX7YCSNR3V3AIMAH5P5R7S465SK24RSO");
+    expect(c.spendingPolicyId).toBe("CBLNG63CIFKLFY6ZTL32NWMGPN7NBDSXZUSCQNTLMYRTLIZYA7MG3KAP");
+  });
+
+  it("defaults EXEC pool + USDC ids to our deployed testnet pool when omitted", () => {
+    const { EXEC_POOL_ID: _p, EXEC_USDC_CONTRACT_ID: _u, ...rest } = env;
+    void _p;
+    void _u;
+    const c = parseConfig(rest);
+    expect(c.execPoolId).toBe("CBI7WAUQ4NPQFZW4C3MDSVFAZJWV3RCLZSTTMA5OZ6BTPEQMOZZNSZ3Z");
+    expect(c.execUsdcContractId).toBe("CD2R7WREEPGIAXZL4ASB76Y6PWTY6ZZXZ6C64AIKFDIG36YKQPNY6B2I");
+  });
+
   it("separates scan (mainnet) and exec (testnet) config", () => {
     const c = parseConfig(env);
     expect(c.scanRpcUrl).toBe("https://mainnet.sorobanrpc.com");
