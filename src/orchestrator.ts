@@ -7,6 +7,7 @@ export interface TickDeps {
   getPosition: () => Position;
   decide: (ctx: { pools: any; position: Position; tolerance: RiskTolerance }) => Promise<Decision>;
   rebalance: (from: string, to: string, amount: bigint) => Promise<TxResult>;
+  deposit: (to: string, amount: bigint) => Promise<TxResult>;
   commitPosition: (p: Position) => void;
   log: (kind: string, msg: string, meta?: unknown) => void;
   recordRebalance: (amount: bigint) => void;
@@ -41,13 +42,15 @@ export async function runTick(d: TickDeps): Promise<{ acted: boolean; reason: st
   if (amount > d.perTxCapStroops) amount = d.perTxCapStroops;
   const dayAgo = d.now - 86400;
   if (d.rebalancedSince(dayAgo) + amount > d.dailyCapStroops) { d.log("skip", "daily cap reached"); return { acted: false, reason: "daily-cap" }; }
-  if (!pos.poolId) { d.log("skip", "no source position"); return { acted: false, reason: "no-source" }; }
-
-  const res = await d.rebalance(pos.poolId, target.poolId, amount);
-  if (!res.success) { d.log("error", `rebalance failed: ${res.error}`, res); return { acted: false, reason: "tx-failed" }; }
+  // idle (poolId === null) -> deposit-only; allocated -> rebalance (withdraw+deposit)
+  const res = pos.poolId
+    ? await d.rebalance(pos.poolId, target.poolId, amount)
+    : await d.deposit(target.poolId, amount);
+  if (!res.success) { d.log("error", `execution failed: ${res.error}`, res); return { acted: false, reason: "tx-failed" }; }
 
   d.recordRebalance(amount);
   d.commitPosition({ poolId: target.poolId, amountUsdc: amount });
-  d.log("rebalance", `moved ${amount} stroops ${pos.poolId}->${target.poolId} (+${deltaBps}bps): ${decision.rationale}`, { hashes: res.hashes });
-  return { acted: true, reason: "rebalanced" };
+  const verb = pos.poolId ? `moved ${pos.poolId}->${target.poolId}` : `deposited idle -> ${target.poolId}`;
+  d.log("rebalance", `${verb} ${amount} stroops (+${deltaBps}bps): ${decision.rationale}`, { hashes: res.hashes });
+  return { acted: true, reason: pos.poolId ? "rebalanced" : "deposited" };
 }

@@ -14,6 +14,7 @@ function deps(over: Partial<TickDeps> = {}): TickDeps {
     getPosition: () => ({ poolId: "C_A", amountUsdc: 1000_0000000n }),
     decide: vi.fn(async () => ({ action: "rebalance" as const, toPool: "C_B", amountUsdc: 1000_0000000n, rationale: "+0.8%" })),
     rebalance: vi.fn(async () => ({ hashes: ["h1", "h2"], success: true })),
+    deposit: vi.fn(async () => ({ hashes: ["d"], success: true })),
     commitPosition: vi.fn(),
     log: vi.fn(),
     recordRebalance: vi.fn(),
@@ -51,5 +52,19 @@ describe("runTick guards", () => {
       decide: vi.fn(async () => ({ action: "rebalance" as const, toPool: "C_B", amountUsdc: 10_000_0000000n, rationale: "big" })) });
     await runTick(d);
     expect(d.rebalance).toHaveBeenCalledWith("C_A", "C_B", 2000_0000000n);
+  });
+
+  it("deposits idle USDC into the best eligible pool (no rebalance)", async () => {
+    const d = deps({
+      getPosition: () => ({ poolId: null, amountUsdc: 1000_0000000n }),
+      decide: vi.fn(async () => ({ action: "rebalance" as const, toPool: "C_B", amountUsdc: 1000_0000000n, rationale: "deploy idle" })),
+      deposit: vi.fn(async () => ({ hashes: ["d1"], success: true })),
+    });
+    const r = await runTick(d);
+    expect(d.deposit).toHaveBeenCalledWith("C_B", 1000_0000000n);
+    expect(d.rebalance).not.toHaveBeenCalled();
+    expect(d.commitPosition).toHaveBeenCalledWith({ poolId: "C_B", amountUsdc: 1000_0000000n });
+    expect(r.acted).toBe(true);
+    expect(r.reason).toBe("deposited");
   });
 });

@@ -30,3 +30,14 @@ describe("executor.rebalance", () => {
     expect(client.submit).not.toHaveBeenCalled();
   });
 });
+
+describe("executor.deposit", () => {
+  it("deposit() does a single deposit and returns one hash", async () => {
+    const client = fakeClient();
+    const wallet = { address: () => "G", signXdr: (x: string) => "signed:" + x };
+    const res = await createExecutor(client, wallet).deposit("C_A", 500_0000000n);
+    expect(res.success).toBe(true);
+    expect(res.hashes).toHaveLength(1);
+    expect(client.buildBlendSubmit).toHaveBeenCalledWith("C_A", "deposit", 500_0000000n);
+  });
+});

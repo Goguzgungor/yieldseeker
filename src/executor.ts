@@ -31,6 +31,14 @@ export function createExecutor(client: SorobanClient, wallet: Wallet) {
         return { hashes, success: false, error: (e as Error).message };
       }
     },
+    async deposit(toPool: string, amount: bigint): Promise<TxResult> {
+      try {
+        const hash = await step(toPool, "deposit", amount);
+        return { hashes: [hash], success: true };
+      } catch (e) {
+        return { hashes: [], success: false, error: (e as Error).message };
+      }
+    },
   };
 }
 export type Executor = ReturnType<typeof createExecutor>;

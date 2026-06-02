@@ -37,6 +37,7 @@ async function main() {
         getPosition: () => db.getPosition(),
         decide: (ctx) => decide(llm, ctx as any),
         rebalance: (f, t, a) => executor.rebalance(f, t, a),
+        deposit: (t, a) => executor.deposit(t, a),
         commitPosition: (p) => db.setPosition(p),
         log: (k, m, meta) => db.log(k, m, meta),
         recordRebalance: (a) => db.recordRebalance(a),
