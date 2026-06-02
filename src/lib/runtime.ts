@@ -1,7 +1,7 @@
 import { Keypair } from "@stellar/stellar-sdk";
 import { parseConfig, type Config } from "./config";
 import { createDb, type Db } from "./db";
-import { createBlendReader, scanYields, type BlendReader } from "./scanner";
+import { createBlendReader, createBlendSource, scanSource } from "./scanner";
 import { createBlendOnchainPoolSource, createPoolDiscovery, isDiscoveryCacheFresh, DISCOVERY_TTL_MS, type PoolDiscovery } from "./discovery";
 import { createSorobanClient, createExecutor, type Executor } from "./executor";
 import { createKeypairWallet } from "./wallet";
@@ -14,7 +14,7 @@ import {
   type SerializedPosition,
   type SerializedScoredPool,
 } from "./serialize";
-import type { Position, ScoredPool, Decision } from "./types";
+import type { Position, ScoredPool, Decision, YieldSource } from "./types";
 
 /** Latest agent decision exposed to the UI (chosen pool + rationale + action). */
 export interface LatestDecision {
@@ -36,7 +36,7 @@ export interface LatestDecision {
 export interface Runtime {
   cfg: Config;
   db: Db;
-  reader: BlendReader;
+  blendSource: YieldSource;
   poolDiscovery: PoolDiscovery;
   executor: Executor;
   llm: LlmClient;
@@ -83,6 +83,7 @@ export function getRuntime(): Runtime {
 
   // Scan side: mainnet reader (read-only, no signing).
   const reader = createBlendReader(cfg.scanRpcUrl, cfg.scanNetworkPassphrase, cfg.scanUsdcContractId);
+  const blendSource = createBlendSource(reader);
 
   // Dynamic on-chain pool discovery (Blend backstop reward zone + factory deploy
   // events), with the curated SCAN_BLEND_POOL_IDS as a fallback.
@@ -108,7 +109,7 @@ export function getRuntime(): Runtime {
   runtime = {
     cfg,
     db,
-    reader,
+    blendSource,
     poolDiscovery,
     executor,
     llm,
@@ -132,7 +133,7 @@ async function tick(rt: Runtime): Promise<void> {
     const r = await runTick({
       scan: async () => {
         const poolIds = rt.poolIds && rt.poolIds.length ? rt.poolIds : rt.cfg.scanBlendPoolIds;
-        const s = await scanYields(rt.reader, poolIds);
+        const s = await scanSource(rt.blendSource, poolIds);
         // Cache the SCORED pools (deterministic; matches what runTick scores
         // internally) so the UI gets riskScore/eligible/reason without a re-scan.
         rt.lastScan = scorePools(s, rt.cfg.tolerance);

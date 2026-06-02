@@ -1,5 +1,5 @@
 /**
- * Verify mainnet Blend pool scanning using the project's createBlendReader + scanYields.
+ * Verify mainnet Blend pool scanning using the project's createBlendReader + createBlendSource + scanSource.
  * Usage: npx tsx scripts/verify-mainnet-scan.ts
  *
  * Mainnet pool IDs sourced from:
@@ -14,7 +14,7 @@
  * Mainnet RPC: https://mainnet.sorobanrpc.com  (confirmed healthy, ledger ~62845982)
  */
 
-import { createBlendReader, scanYields } from "../src/lib/scanner";
+import { createBlendReader, createBlendSource, scanSource } from "../src/lib/scanner";
 
 const MAINNET_RPC = "https://mainnet.sorobanrpc.com";
 const MAINNET_PASSPHRASE = "Public Global Stellar Network ; September 2015";
@@ -37,7 +37,7 @@ async function main() {
   const reader = createBlendReader(MAINNET_RPC, MAINNET_PASSPHRASE, MAINNET_USDC);
 
   console.log("Scanning yields...");
-  const yields = await scanYields(reader, POOL_IDS);
+  const yields = await scanSource(createBlendSource(reader), POOL_IDS);
 
   if (yields.length === 0) {
     console.error("ERROR: No pools returned — check pool IDs and RPC");
