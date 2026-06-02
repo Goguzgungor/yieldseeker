@@ -8,7 +8,7 @@ import { useLivingData } from "./useLivingData";
 import { useFreighter } from "./useFreighter";
 import { useOnboarding } from "./useOnboarding";
 import { formatApy, formatUsdc, networkLabel, truncateAddress } from "./format";
-import { FREIGHTER_INSTALL_URL } from "./links";
+import { FREIGHTER_INSTALL_URL, testnetTxUrl } from "./links";
 
 // Known yield-source protocols (rail order + glyph). A dot lights up when the
 // latest scan actually contains pools from that protocol (derived from
@@ -164,6 +164,28 @@ export default function LivingNetwork() {
               <span style={tickerDotStyle(latestLog.kind)} />
               <span style={styles.tickerKind}>{latestLog.kind}</span>
               <span style={styles.tickerMsg}>{latestLog.message}</span>
+              {/* If the log entry carries tx hashes (rebalance / peruser), link the first one */}
+              {(() => {
+                if (!latestLog.meta) return null;
+                try {
+                  const m = JSON.parse(latestLog.meta) as { hashes?: string[] };
+                  const hash = m.hashes?.[0];
+                  if (!hash) return null;
+                  return (
+                    <a
+                      href={testnetTxUrl(hash)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={styles.tickerTxLink}
+                      title={hash}
+                    >
+                      {truncateAddress(hash, 4, 4)} ↗
+                    </a>
+                  );
+                } catch {
+                  return null;
+                }
+              })()}
             </div>
           )}
         </div>
@@ -571,6 +593,16 @@ const styles: Record<string, S> = {
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
+    flex: 1,
+  },
+  tickerTxLink: {
+    flexShrink: 0,
+    fontSize: 10.5,
+    fontWeight: 600,
+    color: "#2b4cff",
+    textDecoration: "none",
+    fontFamily: "var(--font-plex-mono), ui-monospace, monospace",
+    whiteSpace: "nowrap" as const,
   },
   // bottom
   bottom: {

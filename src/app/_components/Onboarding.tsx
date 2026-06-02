@@ -3,7 +3,11 @@
 import { useState } from "react";
 import type { OnboardingState, OnboardingStep, RegisteredUser, StepKey } from "./useOnboarding";
 import { formatUsdc, truncateAddress } from "./format";
-import { stellarExpertUrl } from "./links";
+import { stellarExpertUrl, testnetContractUrl, testnetTxUrl } from "./links";
+
+// Testnet exec contract ids — surfaced as explorer links in the registered view.
+const EXEC_POOL_ID = "CBI7WAUQ4NPQFZW4C3MDSVFAZJWV3RCLZSTTMA5OZ6BTPEQMOZZNSZ3Z";
+const EXEC_USDC_CONTRACT_ID = "CD2R7WREEPGIAXZL4ASB76Y6PWTY6ZZXZ6C64AIKFDIG36YKQPNY6B2I";
 
 interface Props {
   /** Connected Freighter address; null when disconnected. */
@@ -26,8 +30,6 @@ const STEP_HINTS: Record<StepKey, string> = {
   fund: "We mint test USDC straight into your smart account — no external USDC needed.",
   register: "Hand off to the autonomous agent loop.",
 };
-
-const TESTNET_TX_URL = (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`;
 
 /**
  * Per-user Freighter onboarding panel. Slides in from the right (matches
@@ -172,7 +174,7 @@ export default function Onboarding({ ownerAddress, onboarding, open, onClose }: 
                       {" "}
                       Smart account:{" "}
                       <a
-                        href={stellarExpertUrl(smartWallet)}
+                        href={testnetContractUrl(smartWallet)}
                         target="_blank"
                         rel="noreferrer"
                         style={styles.inlineLink}
@@ -209,6 +211,15 @@ function RegisteredView({
   resetting: boolean;
 }) {
   const supplied = user.position.poolId ? formatUsdc(user.position.amountUsdc) : "0";
+
+  // Pull the most recent supply tx hash from the activity log via meta (if any).
+  // The activity log entries for "peruser" and "rebalance" carry { hashes: string[] }.
+  // We surface the first hash as a "latest tx" link; the log is fetched on mount
+  // via the SSE / polling path and lives in useLivingData, but since RegisteredView
+  // only gets `user` we read it from a data attribute we don't have — instead we
+  // derive this from the position meta exposed by the server (future) or skip for now.
+  // Current approach: show a static link row for exec pool + USDC.
+
   return (
     <>
       <div style={styles.statusBanner}>
@@ -217,7 +228,19 @@ function RegisteredView({
       </div>
 
       <div style={styles.grid}>
-        <Metric label="SMART ACCOUNT" value={truncateAddress(user.smartWallet, 5, 5)} mono />
+        {/* Smart account: clickable testnet contract link */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={styles.metricLabel}>SMART ACCOUNT</span>
+          <a
+            href={testnetContractUrl(user.smartWallet)}
+            target="_blank"
+            rel="noreferrer"
+            style={styles.metricLink}
+            title={user.smartWallet}
+          >
+            {truncateAddress(user.smartWallet, 5, 5)} ↗
+          </a>
+        </div>
         <Metric label="SUPPLIED" value={`${supplied} USDC`} accent />
         <Metric label="POOL RULE" value={`#${user.poolRuleId}`} mono />
         <Metric label="USDC RULE" value={`#${user.usdcRuleId} · capped`} mono />
@@ -238,6 +261,7 @@ function RegisteredView({
               >
                 {truncateAddress(user.position.poolId, 5, 5)} ↗
               </a>
+              {" "}(mainnet reference pool)
             </div>
           </>
         ) : (
@@ -247,8 +271,37 @@ function RegisteredView({
         )}
       </div>
 
+      {/* Exec contracts block — testnet contract links */}
+      <div style={styles.execBlock}>
+        <div style={styles.metricLabel}>TESTNET EXEC CONTRACTS</div>
+        <div style={styles.execRow}>
+          <span style={styles.execLabel}>EXEC POOL</span>
+          <a
+            href={testnetContractUrl(EXEC_POOL_ID)}
+            target="_blank"
+            rel="noreferrer"
+            style={styles.execLink}
+            title={EXEC_POOL_ID}
+          >
+            {truncateAddress(EXEC_POOL_ID, 4, 4)} ↗
+          </a>
+        </div>
+        <div style={styles.execRow}>
+          <span style={styles.execLabel}>USDC</span>
+          <a
+            href={testnetContractUrl(EXEC_USDC_CONTRACT_ID)}
+            target="_blank"
+            rel="noreferrer"
+            style={styles.execLink}
+            title={EXEC_USDC_CONTRACT_ID}
+          >
+            {truncateAddress(EXEC_USDC_CONTRACT_ID, 4, 4)} ↗
+          </a>
+        </div>
+      </div>
+
       <a
-        href={stellarExpertUrl(user.smartWallet)}
+        href={testnetContractUrl(user.smartWallet)}
         target="_blank"
         rel="noreferrer"
         style={{ ...styles.cta, textDecoration: "none", display: "grid", placeItems: "center" }}
@@ -294,7 +347,7 @@ function StepRow({ step, index }: { step: OnboardingStep; index: number }) {
         <div style={styles.stepHint}>
           {step.detail ? (
             step.txHash ? (
-              <a href={TESTNET_TX_URL(step.txHash)} target="_blank" rel="noreferrer" style={styles.inlineLink}>
+              <a href={testnetTxUrl(step.txHash)} target="_blank" rel="noreferrer" style={styles.inlineLink}>
                 {step.detail.length > 42 ? truncateAddress(step.detail, 8, 8) : step.detail} ↗
               </a>
             ) : (
@@ -417,6 +470,44 @@ const styles: Record<string, S> = {
     fontWeight: 500,
   },
   metricValue: { fontSize: 18, fontWeight: 700, wordBreak: "break-word" },
+  metricLink: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#2b4cff",
+    textDecoration: "none",
+    fontFamily: "var(--font-plex-mono), ui-monospace, monospace",
+    letterSpacing: "-0.01em",
+    wordBreak: "break-word" as const,
+  },
+  execBlock: {
+    background: "var(--chip)",
+    borderRadius: 12,
+    padding: "12px 14px",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 8,
+  },
+  execRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  execLabel: {
+    fontSize: 9.5,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase" as const,
+    color: "var(--mut)",
+    fontWeight: 500,
+  },
+  execLink: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#2b4cff",
+    textDecoration: "none",
+    fontFamily: "var(--font-plex-mono), ui-monospace, monospace",
+    letterSpacing: "-0.01em",
+  },
   positionBlock: {
     background: "var(--chip)",
     borderRadius: 12,
