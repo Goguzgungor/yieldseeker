@@ -1,5 +1,6 @@
-import { rpc, TransactionBuilder, BASE_FEE, Account } from "@stellar/stellar-sdk";
-import * as Blend from "@blend-capital/blend-sdk";
+import { rpc, TransactionBuilder, BASE_FEE, Account, xdr as StellarXdr } from "@stellar/stellar-sdk";
+import { PoolContractV2, RequestType } from "@blend-capital/blend-sdk";
+import type { SubmitArgs, Request } from "@blend-capital/blend-sdk";
 import type { Wallet } from "./wallet.js";
 import type { TxResult } from "./types.js";
 
@@ -34,41 +35,97 @@ export function createExecutor(client: SorobanClient, wallet: Wallet) {
 }
 export type Executor = ReturnType<typeof createExecutor>;
 
-// Spike-gated real client. CONFIRM RequestType enum + submit() shape against Task-5 spike later.
+/**
+ * Real Soroban client — confirmed against Blend SDK 3.2.2 types and Stellar SDK 15 (Task 5 spike).
+ *
+ * Confirmed SDK API:
+ *   - RequestType enum (pool/index.d.ts):
+ *       Supply=0, Withdraw=1, SupplyCollateral=2, WithdrawCollateral=3, Borrow=4, Repay=5, ...
+ *     We use Supply(0)/Withdraw(1) for non-collateral lending positions.
+ *
+ *   - PoolContractV2 (pool_contract.d.ts):
+ *       new PoolContractV2(address: string)
+ *       .submit(args: SubmitArgs): string  — returns base64-encoded operation XDR string
+ *       SubmitArgs = { from, spender, to: Address|string; requests: Array<Request> }
+ *       Request = { request_type: RequestType; address: string; amount: i128 }
+ *
+ *   - Stellar SDK 15 rpc.Server:
+ *       server.getAccount(address): Promise<Account> (returns object with .accountId(), .sequenceNumber())
+ *       server.simulateTransaction(tx): Promise<SimulateTransactionResponse>
+ *       server.sendTransaction(tx): Promise<SendTransactionResponse> — .status, .hash
+ *       server.getTransaction(hash): Promise<GetTransactionResponse> — .status ("SUCCESS"|"FAILED"|"NOT_FOUND")
+ *       rpc.Api.isSimulationError(sim): boolean
+ *
+ *   - PoolContractV2.submit() returns a base64 op XDR string.
+ *     We decode it with StellarXdr.Operation.fromXDR(op, "base64") to get a Stellar SDK Operation.
+ */
 export function createSorobanClient(opts: {
   rpcUrl: string; networkPassphrase: string; walletAddress: string; usdcId: string;
 }): SorobanClient {
   const server = new rpc.Server(opts.rpcUrl, { allowHttp: opts.rpcUrl.startsWith("http://") });
-  const RequestType: any = (Blend as any).RequestType; // CONFIRM (SupplyCollateral / WithdrawCollateral)
+
   return {
     async buildBlendSubmit(poolId, kind, amount) {
-      const pool: any = new (Blend as any).PoolContract(poolId);
-      const op = pool.submit({
-        from: opts.walletAddress, spender: opts.walletAddress, to: opts.walletAddress,
-        requests: [{
-          request_type: kind === "deposit" ? RequestType.SupplyCollateral : RequestType.WithdrawCollateral,
-          address: opts.usdcId, amount,
-        }],
-      }); // CONFIRM return type (base64 op xdr vs Operation)
+      const poolContract = new PoolContractV2(poolId);
+
+      const request: Request = {
+        // Supply(0) for deposit, Withdraw(1) for non-collateral withdrawal
+        request_type: kind === "deposit" ? RequestType.Supply : RequestType.Withdraw,
+        address: opts.usdcId,
+        amount,
+      };
+
+      const submitArgs: SubmitArgs = {
+        from: opts.walletAddress,
+        spender: opts.walletAddress,
+        to: opts.walletAddress,
+        requests: [request],
+      };
+
+      // submit() returns a base64-encoded operation XDR string (confirmed from pool_contract.d.ts)
+      const opBase64: string = poolContract.submit(submitArgs);
+
       const source = await server.getAccount(opts.walletAddress);
-      const tx = new TransactionBuilder(new Account(source.accountId(), source.sequenceNumber()), {
-        fee: BASE_FEE, networkPassphrase: opts.networkPassphrase,
-      }).addOperation(typeof op === "string" ? (Blend as any).xdr.Operation.fromXDR(op, "base64") : op)
-        .setTimeout(30).build();
+      const tx = new TransactionBuilder(
+        new Account(source.accountId(), source.sequenceNumber()),
+        { fee: BASE_FEE, networkPassphrase: opts.networkPassphrase },
+      )
+        .addOperation(StellarXdr.Operation.fromXDR(opBase64, "base64"))
+        .setTimeout(30)
+        .build();
+
       return tx.toXDR();
     },
-    async simulate(xdr) {
-      const tx = TransactionBuilder.fromXDR(xdr, opts.networkPassphrase);
+
+    async simulate(txXdr) {
+      const tx = TransactionBuilder.fromXDR(txXdr, opts.networkPassphrase);
       const sim = await server.simulateTransaction(tx as any);
-      return (rpc.Api as any).isSimulationError(sim) ? { ok: false, error: (sim as any).error } : { ok: true };
+      if (rpc.Api.isSimulationError(sim)) {
+        return { ok: false, error: (sim as rpc.Api.SimulateTransactionErrorResponse).error };
+      }
+      return { ok: true };
     },
+
     async submit(signedXdr) {
       const tx = TransactionBuilder.fromXDR(signedXdr, opts.networkPassphrase);
       const sent = await server.sendTransaction(tx as any);
-      if (sent.status === "ERROR") return { hash: sent.hash, success: false, error: JSON.stringify((sent as any).errorResult) };
+      if (sent.status === "ERROR") {
+        return {
+          hash: sent.hash,
+          success: false,
+          error: JSON.stringify((sent as rpc.Api.SendTransactionResponse & { errorResult?: unknown }).errorResult),
+        };
+      }
       let g = await server.getTransaction(sent.hash);
-      for (let i = 0; i < 10 && g.status === "NOT_FOUND"; i++) { await new Promise((r) => setTimeout(r, 1000)); g = await server.getTransaction(sent.hash); }
-      return { hash: sent.hash, success: g.status === "SUCCESS", error: g.status === "SUCCESS" ? undefined : g.status };
+      for (let i = 0; i < 10 && g.status === "NOT_FOUND"; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        g = await server.getTransaction(sent.hash);
+      }
+      return {
+        hash: sent.hash,
+        success: g.status === "SUCCESS",
+        error: g.status === "SUCCESS" ? undefined : g.status,
+      };
     },
   };
 }
