@@ -5,6 +5,8 @@
 - **Bağlam kaynağı:** Deep-research raporu (Stellar yield kaynakları, 25 kaynak / 25 çapraz-doğrulanmış iddia) + mevcut kod haritası
 - **İlgili spec:** `2026-06-02-yieldseeker-stellar-mvp-design.md` (bu, oradaki §2 "gerekirse +DeFindex" notunun hayata geçirilmesidir)
 
+> **Tasarım güncellemesi (2026-06-03 — plan aşaması):** DeFindex okuma yöntemi araştırma sonucu netleşti. `@defindex/sdk` **kullanılmıyor** — meğer merkezi bir HTTP API istemcisi (`api.defindex.io` + API key) imiş ve mainnet desteği dokümante değil; projenin "mainnet'i RPC'den oku" modeline aykırı. Bunun yerine: DeFindex **USDC strategy contract'ı** (`CDB2WMKQ…`; vault değil — vault'lar factory ile dinamik yaratılıyor, kanonik adres yok) doğrudan okunur. **APY / utilization / oracle health**, strategy'nin autocompound ettiği **underlying Blend fixed-pool'undan** alınır (config'te `blendPoolId` ile eşlenir; o pool zaten taranıyor). **TVL on-chain** strategy getter'ından `simulateTransaction` ile okunur; getter küçük bir spike (`scripts/verify-defindex-strategy.ts`) ile doğrulanır, bulunamazsa config'teki `fallbackTvlUsdc`'ye zarifçe düşülür. **Sonuç:** §8'deki "vault fairness" sorunu **ortadan kalkar** (utilization artık underlying Blend'den gerçek değer) → `risk.ts` **değişmez**. §7 config alanı `SCAN_DEFINDEX_VAULT_IDS` yerine `SCAN_DEFINDEX_STRATEGIES` (JSON: `{strategyId, blendPoolId, name, fallbackTvlUsdc}`) olur. `YieldSource` tipi `types.ts`'te tanımlanır.
+
 ---
 
 ## 1. Amaç & Özet
