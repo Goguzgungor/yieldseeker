@@ -7,8 +7,21 @@ import { createSorobanClient, createExecutor, type Executor } from "./executor";
 import { createKeypairWallet } from "./wallet";
 import { createAnthropicLlm, decide, type LlmClient } from "./agent";
 import { runTick } from "./orchestrator";
-import { serializePosition, type SerializedPosition } from "./serialize";
-import type { Position, PoolYield } from "./types";
+import { scorePools } from "./risk";
+import {
+  serializePosition,
+  serializeScoredPools,
+  type SerializedPosition,
+  type SerializedScoredPool,
+} from "./serialize";
+import type { Position, ScoredPool, Decision } from "./types";
+
+/** Latest agent decision exposed to the UI (chosen pool + rationale + action). */
+export interface LatestDecision {
+  action: Decision["action"];
+  chosenPoolId: string | null;
+  rationale: string;
+}
 
 /**
  * Lazily-built process singleton wiring config → db → reader/discovery/wallet/
@@ -27,8 +40,13 @@ export interface Runtime {
   poolDiscovery: PoolDiscovery;
   executor: Executor;
   llm: LlmClient;
-  /** Most recent scan result (BigInts still as bigint; serialize at the edge). */
-  lastScan: PoolYield[];
+  /**
+   * Most recent SCORED scan result (riskScore/eligible/reason populated;
+   * BigInts still as bigint — serialize at the edge). Empty until the first tick.
+   */
+  lastScan: ScoredPool[];
+  /** Latest agent decision (chosen pool + rationale + action); null until first decide. */
+  lastDecision: LatestDecision | null;
   lastRebalanceAt: number;
   running: boolean;
   loopStarted: boolean;
@@ -95,6 +113,7 @@ export function getRuntime(): Runtime {
     executor,
     llm,
     lastScan: [],
+    lastDecision: null,
     lastRebalanceAt: 0,
     running: false,
     loopStarted: false,
@@ -114,12 +133,23 @@ async function tick(rt: Runtime): Promise<void> {
       scan: async () => {
         const poolIds = rt.poolIds && rt.poolIds.length ? rt.poolIds : rt.cfg.scanBlendPoolIds;
         const s = await scanYields(rt.reader, poolIds);
-        rt.lastScan = s;
+        // Cache the SCORED pools (deterministic; matches what runTick scores
+        // internally) so the UI gets riskScore/eligible/reason without a re-scan.
+        rt.lastScan = scorePools(s, rt.cfg.tolerance);
         return s;
       },
       tolerance: rt.cfg.tolerance,
       getPosition: () => rt.db.getPosition(),
-      decide: (ctx) => decide(rt.llm, ctx as any),
+      // Wrap `decide` so the chosen pool + rationale are captured for the UI.
+      decide: async (ctx) => {
+        const decision = await decide(rt.llm, ctx as any);
+        rt.lastDecision = {
+          action: decision.action,
+          chosenPoolId: decision.action === "rebalance" ? decision.toPool ?? null : null,
+          rationale: decision.rationale,
+        };
+        return decision;
+      },
       // Execution always targets the single testnet exec pool regardless of which
       // mainnet pool had the best yield — multi-pool exec is future work.
       rebalance: (_fromMainnet, _toMainnet, a) => rt.executor.deposit(rt.cfg.execPoolId, a),
@@ -192,7 +222,14 @@ export function getRecentLog(n = 50) {
   return getRuntime().db.recentLog(n);
 }
 
-/** Cached most-recent scan, BigInts rendered as strings for JSON. */
-export function getLastScan(): Array<Record<string, unknown>> {
-  return getRuntime().lastScan.map((p) => ({ ...p, tvlUsdc: p.tvlUsdc.toString() }));
+/** Cached most-recent SCORED scan, BigInts rendered as strings for JSON. */
+export function getLastScan(): SerializedScoredPool[] {
+  return serializeScoredPools(getRuntime().lastScan);
+}
+
+/** Latest agent decision (chosen pool + rationale + action), or null if none yet. */
+export function getDecision(): LatestDecision {
+  return (
+    getRuntime().lastDecision ?? { action: "hold", chosenPoolId: null, rationale: "" }
+  );
 }

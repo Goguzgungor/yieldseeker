@@ -1,10 +1,11 @@
-import { getSerializedPosition, getRecentLog } from "../../../lib/runtime";
+import { getSerializedPosition, getRecentLog, getDecision } from "../../../lib/runtime";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Server-Sent Events stream. Pushes `{ position, log }` every 2s. The interval
- * is cleaned up when the client cancels the stream (closes the connection).
+ * Server-Sent Events stream. Pushes `{ position, decision, log }` every 2s. The
+ * interval is cleaned up when the client cancels the stream (closes the
+ * connection).
  */
 export async function GET() {
   const encoder = new TextEncoder();
@@ -13,7 +14,11 @@ export async function GET() {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const push = () => {
-        const payload = { position: getSerializedPosition(), log: getRecentLog(5) };
+        const payload = {
+          position: getSerializedPosition(),
+          decision: getDecision(),
+          log: getRecentLog(8),
+        };
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
       };
       push(); // emit immediately so a fresh client isn't blank for 2s

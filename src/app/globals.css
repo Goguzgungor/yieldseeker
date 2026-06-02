@@ -1,0 +1,42 @@
+:root {
+  --bg: #fbfbf9;
+  --ink: #0b0b0c;
+  --mut: #9a9aa0;
+  --line: #e2e2dd;
+  --chip: #efefea;
+  --blue: #2b4cff;
+  --blue-soft: #2b4cff22;
+  --blue-faint: #2b4cff11;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-plex-mono), ui-monospace, "SFMono-Regular", monospace;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+input {
+  font-family: inherit;
+}
+
+::selection {
+  background: var(--blue-soft);
+}
