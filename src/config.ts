@@ -9,8 +9,14 @@ const Schema = z.object({
   // ── Scan side = MAINNET (read-only yield discovery) ───────────────────────
   SCAN_RPC_URL: z.string().url(),
   SCAN_NETWORK_PASSPHRASE: z.string().min(1),
+  // Curated fallback pool ids, used when on-chain discovery returns nothing.
   SCAN_BLEND_POOL_IDS: z.string().min(1),
   SCAN_USDC_CONTRACT_ID: z.string().min(1),
+  // On-chain discovery contracts (Blend V2, mainnet) — OPTIONAL: defaults baked
+  // in so existing .env files keep working untouched. From blend-utils
+  // mainnet.contracts.json (poolFactoryV2 / backstopV2).
+  SCAN_POOL_FACTORY_ID: z.string().min(1).default("CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU"),
+  SCAN_BACKSTOP_ID: z.string().min(1).default("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"),
 
   // ── Exec side = TESTNET (real tx, no real money) ──────────────────────────
   EXEC_RPC_URL: z.string().url(),
@@ -42,6 +48,8 @@ export function parseConfig(env: Record<string, string | undefined>) {
     scanNetworkPassphrase: e.SCAN_NETWORK_PASSPHRASE,
     scanBlendPoolIds: e.SCAN_BLEND_POOL_IDS.split(",").map((s) => s.trim()).filter(Boolean),
     scanUsdcContractId: e.SCAN_USDC_CONTRACT_ID,
+    scanPoolFactoryId: e.SCAN_POOL_FACTORY_ID,
+    scanBackstopId: e.SCAN_BACKSTOP_ID,
     // Exec (testnet)
     execRpcUrl: e.EXEC_RPC_URL,
     execNetworkPassphrase: e.EXEC_NETWORK_PASSPHRASE,

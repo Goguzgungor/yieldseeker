@@ -27,6 +27,12 @@ describe("parseConfig", () => {
     expect(c.minYieldDeltaBps).toBe(50);
   });
 
+  it("defaults the on-chain discovery contract ids (mainnet) when env omits them", () => {
+    const c = parseConfig(env);
+    expect(c.scanPoolFactoryId).toBe("CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU");
+    expect(c.scanBackstopId).toBe("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7");
+  });
+
   it("separates scan (mainnet) and exec (testnet) config", () => {
     const c = parseConfig(env);
     expect(c.scanRpcUrl).toBe("https://mainnet.sorobanrpc.com");

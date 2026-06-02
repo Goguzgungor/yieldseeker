@@ -3,6 +3,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 import { parseConfig } from "./config.js";
 import { createDb } from "./db.js";
 import { createBlendReader, scanYields } from "./scanner.js";
+import { createBlendOnchainPoolSource, createPoolDiscovery } from "./discovery.js";
 import { createSorobanClient, createExecutor } from "./executor.js";
 import { createKeypairWallet } from "./wallet.js";
 import { createAnthropicLlm, decide } from "./agent.js";
@@ -15,6 +16,33 @@ async function main() {
 
   // Scan side: mainnet reader (read-only, no signing)
   const reader = createBlendReader(cfg.scanRpcUrl, cfg.scanNetworkPassphrase, cfg.scanUsdcContractId);
+
+  // Dynamic on-chain pool discovery (Blend backstop reward zone + factory deploy
+  // events), with the curated SCAN_BLEND_POOL_IDS as a fallback. Resolved once at
+  // startup and cached for the lifetime of the process.
+  const poolSource = createBlendOnchainPoolSource({
+    rpcUrl: cfg.scanRpcUrl,
+    networkPassphrase: cfg.scanNetworkPassphrase,
+    backstopId: cfg.scanBackstopId,
+    factoryId: cfg.scanPoolFactoryId,
+  });
+  const poolDiscovery = createPoolDiscovery(poolSource, cfg.scanBlendPoolIds);
+  let discoveredPoolIds = cfg.scanBlendPoolIds;
+  try {
+    discoveredPoolIds = await poolDiscovery.discoverPoolIds();
+    const fromOnchain = !arraysEqual(discoveredPoolIds, cfg.scanBlendPoolIds);
+    db.log(
+      "discovery",
+      `discovered ${discoveredPoolIds.length} Blend pool(s) (${fromOnchain ? "on-chain" : "fallback"})`,
+      { poolIds: discoveredPoolIds, source: fromOnchain ? "onchain" : "fallback" },
+    );
+  } catch (e) {
+    discoveredPoolIds = cfg.scanBlendPoolIds;
+    db.log("discovery", `pool discovery failed, using ${discoveredPoolIds.length} fallback pool(s): ${(e as Error).message}`, {
+      poolIds: discoveredPoolIds,
+      source: "fallback",
+    });
+  }
 
   // Exec side: testnet signer + client (real txs, no real money)
   const wallet = createKeypairWallet(Keypair.fromSecret(cfg.agentSignerSecret), cfg.execNetworkPassphrase); // swap to policy-signer wallet when ready
@@ -41,7 +69,7 @@ async function main() {
     try {
       const now = Math.floor(Date.now() / 1000);
       const r = await runTick({
-        scan: async () => { const s = await scanYields(reader, cfg.scanBlendPoolIds); state.lastScan = s as any; return s; },
+        scan: async () => { const s = await scanYields(reader, discoveredPoolIds.length ? discoveredPoolIds : cfg.scanBlendPoolIds); state.lastScan = s as any; return s; },
         tolerance: cfg.tolerance,
         getPosition: () => db.getPosition(),
         decide: (ctx) => decide(llm, ctx as any),
@@ -63,4 +91,8 @@ async function main() {
   await loop();
   setInterval(loop, cfg.scanIntervalSec * 1000);
 }
+function arraysEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
 main().catch((e) => { console.error(e); process.exit(1); });
