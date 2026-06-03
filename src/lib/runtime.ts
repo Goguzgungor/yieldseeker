@@ -19,7 +19,7 @@ import { createSorobanClient, createExecutor, type Executor } from "./executor";
 import { createKeypairWallet, createPolicySignerWallet } from "./wallet";
 import { createAnthropicLlm, decide, type LlmClient } from "./agent";
 import { runTick, runPerUserExecution } from "./orchestrator";
-import { scorePools } from "./risk";
+import { scorePools, bestPool } from "./risk";
 import type { UserRegistration, TxResult } from "./types";
 import {
   serializePosition,
@@ -318,21 +318,19 @@ async function tick(rt: Runtime, doExecute: boolean): Promise<void> {
       if (result.supplied > 0) {
         rt.lastRebalanceAt = now;
         // Mirror the per-user supply into the legacy singleton position so the
-        // graph's `activePoolId` check (position.poolId + amountUsdc > 0)
-        // triggers the blue glow + ripple animation. The LLM may have decided
-        // "hold" for the main wallet (no existing position), but the per-user
-        // execution is independent — once real USDC lands, the UI should show it.
+        // graph's `activePoolId` check triggers the blue glow + ripple animation.
+        // IMPORTANT: use the MAINNET pool ID (LLM's chosen pool or best eligible)
+        // — the testnet execPoolId never matches a displayed graph node.
         const prev = await rt.db.getPosition();
         if (!prev.poolId) {
+          const mainnetPoolId =
+            rt.lastDecision?.chosenPoolId ??
+            bestPool(rt.lastScan)?.poolId ??
+            rt.cfg.execPoolId;
           await rt.db.setPosition({
-            poolId: rt.cfg.execPoolId,
+            poolId: mainnetPoolId,
             amountUsdc: result.totalStroops,
           });
-          // Persist for cross-invocation visibility (route handlers + polling).
-          await rt.db.setKV(
-            "lastScan",
-            JSON.stringify(serializeScoredPools(rt.lastScan)),
-          );
         }
       }
     }
