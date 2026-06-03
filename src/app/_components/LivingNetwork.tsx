@@ -90,9 +90,8 @@ export default function LivingNetwork() {
   const mySmartWallet = onboarding.registered ? onboarding.registered.smartWallet : null;
   const myTxs = useMemo(() => {
     if (mySmartWallet) return agentTxs.filter((tx) => tx.smartWallet === mySmartWallet);
-    if (wallet.address) return []; // connected but not yet registered → clean slate
-    return agentTxs; // visitor: show all agent activity
-  }, [agentTxs, mySmartWallet, wallet.address]);
+    return []; // no registered wallet → empty panel (setup mode or visitor)
+  }, [agentTxs, mySmartWallet]);
 
   // Ripple trigger: only fires for this user's latest TX, not someone else's.
   const latestTxHash = myTxs[0]?.hash ?? null;
