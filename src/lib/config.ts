@@ -1,6 +1,14 @@
 import { z } from "zod";
 
 const Schema = z.object({
+  // ── State store ───────────────────────────────────────────────────────────
+  // MongoDB connection string (replaces the old SQLite file so state survives on
+  // Vercel's read-only / non-shared serverless filesystem). OPTIONAL at parse
+  // time so the test suite + a bare local run still boot; when omitted the DB +
+  // registry fall back to in-memory. The Mongo layer fails loudly if it's needed
+  // but absent.
+  MONGODB_URI: z.string().min(1).optional(),
+
   // ── Anthropic / LLM ───────────────────────────────────────────────────────
   ANTHROPIC_API_KEY: z.string().min(1),
   ANTHROPIC_MODEL: z.string().default("claude-sonnet-4-6"),
@@ -99,6 +107,8 @@ export function parseConfig(env: Record<string, string | undefined>) {
       fallbackTvlUsdc: toStroops(s.fallbackTvlUsdc),
     }));
   return {
+    // State store
+    mongodbUri: e.MONGODB_URI,
     // LLM
     anthropicApiKey: e.ANTHROPIC_API_KEY,
     anthropicModel: e.ANTHROPIC_MODEL,

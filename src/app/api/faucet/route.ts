@@ -72,7 +72,7 @@ export async function POST(req: Request) {
     // 0n on any read error — never fails an otherwise-successful mint response.
     const balanceStroops = await getUsdcBalanceStroops(to);
 
-    rt.db.log("faucet", `minted ${amountUsdc} USDC → ${to}`, {
+    await rt.db.log("faucet", `minted ${amountUsdc} USDC → ${to}`, {
       to,
       amount: amountUsdc,
       txHash,

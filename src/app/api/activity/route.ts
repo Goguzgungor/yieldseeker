@@ -3,7 +3,7 @@ import { getRecentLog } from "../../../lib/runtime";
 
 export const dynamic = "force-dynamic";
 
-// Recent activity log, newest first (db orders by id DESC).
+// Recent activity log, newest first.
 export async function GET() {
-  return NextResponse.json(getRecentLog(50));
+  return NextResponse.json(await getRecentLog(50));
 }

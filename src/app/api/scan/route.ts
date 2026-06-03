@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
-import { getLastScan } from "../../../lib/runtime";
+import { getLastScan, ensureScanPopulated } from "../../../lib/runtime";
 
 export const dynamic = "force-dynamic";
+// First-ever load runs one lazy scan (mainnet reads + LLM) — allow headroom.
+export const maxDuration = 60;
 
 // { pools: SerializedScoredPool[], updatedAt: number | null }
 // `pools` contains BigInts rendered as strings; `updatedAt` is epoch-ms.
-// Returns the cached snapshot immediately — never blocks on a fresh tick.
+// On a cold cache (never scanned) this lazily runs ONE side-effect-free scan to
+// populate it ("run on app start"); thereafter it returns the cached snapshot
+// and the daily Cron keeps it fresh.
 export async function GET() {
-  return NextResponse.json(getLastScan());
+  await ensureScanPopulated();
+  return NextResponse.json(await getLastScan());
 }

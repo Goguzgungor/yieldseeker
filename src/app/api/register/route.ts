@@ -30,7 +30,7 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const reg = registerUser(parsed.data);
+  const reg = await registerUser(parsed.data);
   return NextResponse.json({ ok: true, user: reg }, { status: 201 });
 }
 
@@ -46,6 +46,6 @@ export async function DELETE(req: Request) {
   if (!owner) {
     return NextResponse.json({ error: "owner query param required" }, { status: 400 });
   }
-  const removed = unregisterUser(owner);
+  const removed = await unregisterUser(owner);
   return NextResponse.json({ ok: true, removed });
 }

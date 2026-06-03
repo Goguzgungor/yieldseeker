@@ -11,14 +11,14 @@ function deps(over: Partial<TickDeps> = {}): TickDeps {
   return {
     scan: vi.fn(async () => pools),
     tolerance: "balanced",
-    getPosition: () => ({ poolId: "C_A", amountUsdc: 1000_0000000n }),
+    getPosition: async () => ({ poolId: "C_A", amountUsdc: 1000_0000000n }),
     decide: vi.fn(async () => ({ action: "rebalance" as const, toPool: "C_B", amountUsdc: 1000_0000000n, rationale: "+0.8%" })),
     rebalance: vi.fn(async () => ({ hashes: ["h1", "h2"], success: true })),
     deposit: vi.fn(async () => ({ hashes: ["d"], success: true })),
-    commitPosition: vi.fn(),
-    log: vi.fn(),
-    recordRebalance: vi.fn(),
-    rebalancedSince: () => 0n,
+    commitPosition: vi.fn(async () => {}),
+    log: vi.fn(async () => {}),
+    recordRebalance: vi.fn(async () => {}),
+    rebalancedSince: async () => 0n,
     minYieldDeltaBps: 50, perTxCapStroops: 2000_0000000n, dailyCapStroops: 5000_0000000n,
     cooldownSec: 120, lastRebalanceAt: 0, now: 100000,
     ...over,
@@ -48,7 +48,7 @@ describe("runTick guards", () => {
   });
 
   it("clamps amount to per-tx cap", async () => {
-    const d = deps({ getPosition: () => ({ poolId: "C_A", amountUsdc: 10_000_0000000n }),
+    const d = deps({ getPosition: async () => ({ poolId: "C_A", amountUsdc: 10_000_0000000n }),
       decide: vi.fn(async () => ({ action: "rebalance" as const, toPool: "C_B", amountUsdc: 10_000_0000000n, rationale: "big" })) });
     await runTick(d);
     expect(d.rebalance).toHaveBeenCalledWith("C_A", "C_B", 2000_0000000n);
@@ -56,7 +56,7 @@ describe("runTick guards", () => {
 
   it("deposits idle USDC into the best eligible pool (no rebalance)", async () => {
     const d = deps({
-      getPosition: () => ({ poolId: null, amountUsdc: 1000_0000000n }),
+      getPosition: async () => ({ poolId: null, amountUsdc: 1000_0000000n }),
       decide: vi.fn(async () => ({ action: "rebalance" as const, toPool: "C_B", amountUsdc: 1000_0000000n, rationale: "deploy idle" })),
       deposit: vi.fn(async () => ({ hashes: ["d1"], success: true })),
     });
@@ -81,10 +81,12 @@ function perUserDeps(over: Partial<PerUserDeps> = {}): PerUserDeps {
     users: [user("G_A", "C_SA_A"), user("G_B", "C_SA_B")],
     execPoolId: "C_EXEC",
     supplyForUser: vi.fn(async () => ({ hashes: ["hx"], success: true })),
-    getUserPosition: (sw) => positions.get(sw) ?? { poolId: null, amountUsdc: 0n },
-    setUserPosition: vi.fn((sw, p) => positions.set(sw, p)),
+    getUserPosition: async (sw) => positions.get(sw) ?? { poolId: null, amountUsdc: 0n },
+    setUserPosition: vi.fn(async (sw, p) => {
+      positions.set(sw, p);
+    }),
     idleUsdcForUser: vi.fn(async () => 500_0000000n),
-    log: vi.fn(),
+    log: vi.fn(async () => {}),
     perTxCapStroops: 2000_0000000n,
     ...over,
   };
@@ -153,7 +155,7 @@ describe("runPerUserExecution (ARMA per-user)", () => {
     const positions = new Map<string, Position>([["C_SA_A", { poolId: "C_EXEC", amountUsdc: 100_0000000n }]]);
     const d = perUserDeps({
       users: [user("G_A", "C_SA_A")],
-      getUserPosition: (sw) => positions.get(sw) ?? { poolId: null, amountUsdc: 0n },
+      getUserPosition: async (sw) => positions.get(sw) ?? { poolId: null, amountUsdc: 0n },
       idleUsdcForUser: vi.fn(async () => 50_0000000n),
     });
     await runPerUserExecution(d, "C_BEST");

@@ -1,129 +1,194 @@
 /**
- * In-memory, DEMO-RESETTABLE per-user registry (ARMA model).
+ * Per-user smart-account registry (ARMA model) — async, MongoDB-backed.
  *
- * The per-user smart-account registry + per-user positions used to live in
- * SQLite (`users` / `positions` tables). For the demo we want them IN-MEMORY so
- * every server restart — and the explicit reset affordance — re-shows the
- * Freighter onboarding instead of remembering past runs.
+ * Maps each owner (G-address) → their deployed OZ SmartAccount + the agent's two
+ * context-rule ids, plus each smart wallet's current position. The agent loop
+ * reads this to supply every registered user's idle USDC.
  *
- * WHY `globalThis` (and not a module-level singleton):
- *   In this Next.js setup the instrumentation loop (`src/instrumentation.ts` →
- *   `startLoop`) and the route handlers (`/api/register`, `/api/users`, …) can
- *   resolve SEPARATE in-memory instances of the same module — that is exactly
- *   the bug that forced the scan/decision KV cache into SQLite. A value stashed
- *   on `globalThis`, however, is shared across all module instances WITHIN one
- *   Node process, so the loop and the routes see the same registry. It does NOT
- *   persist across server restarts, which is precisely the demo behavior we want
- *   (fresh process ⇒ empty registry ⇒ onboarding shows again).
+ * WHY Mongo (was in-memory `globalThis`): on Vercel the agent tick (a daily
+ * Cron) runs in a DIFFERENT function instance than the one that handled a user's
+ * `/api/register`, so an in-process map would be invisible to the loop — the
+ * agent could never act on a user. A shared external store fixes that and lets
+ * "every user can try the flow at least once" actually hold. The demo "Reset"
+ * affordance still works (it clears the collections).
  *
- * If — and only if — `globalThis` sharing turned out NOT to hold here (the loop
- * couldn't see a route-written registration), the documented fallback is a
- * SQLite table cleared on server startup (ephemeral DB → still resets per demo).
- * See `verifyRegistryGlobalSharing()` + the report for which path is in use.
+ * `createMemoryRegistry()` (used when MONGODB_URI is unset, i.e. the test suite)
+ * keeps the old globalThis behavior so unit tests stay offline + deterministic.
  */
 import type { Position, UserRegistration } from "./types";
+import { getCollection } from "./mongo";
 
-/** Shape of the process-wide registry stash. */
-interface RegistryStore {
-  /** owner G-address → registration. */
-  users: Map<string, UserRegistration>;
-  /** smart wallet C-address → position. */
-  positions: Map<string, Position>;
+interface UserDoc extends UserRegistration {
+  _id: string; // === owner
+}
+interface PositionDoc {
+  _id: string; // === smartWallet
+  poolId: string | null;
+  amount: string; // decimal stroops (Mongo has no native BigInt)
 }
 
-/**
- * The single process-wide store, created lazily on `globalThis` so it is shared
- * between the instrumentation loop and the route handlers (see the file header).
- * Using `??=` means the first module instance to touch it creates the Maps and
- * every later instance reuses the SAME object.
- */
-function store(): RegistryStore {
-  const g = globalThis as unknown as { __ysRegistry?: RegistryStore };
+export interface Registry {
+  registerUser(u: UserRegistration): Promise<void>;
+  listUsers(): Promise<UserRegistration[]>;
+  getUser(owner: string): Promise<UserRegistration | null>;
+  removeUser(owner: string): Promise<boolean>;
+  setUserPosition(smartWallet: string, p: Position): Promise<void>;
+  getUserPosition(smartWallet: string): Promise<Position>;
+  clearRegistry(): Promise<number>;
+  userCount(): Promise<number>;
+  registryStoreId(): string;
+}
+
+const idleUser = (): Position => ({ poolId: null, amountUsdc: 0n });
+
+// ── Mongo implementation ──────────────────────────────────────────────────────
+
+function createMongoRegistry(): Registry {
+  return {
+    async registerUser(u) {
+      const coll = await getCollection<UserDoc>("users");
+      // Upsert by owner; re-registering replaces wallet + rule ids in place.
+      await coll.updateOne(
+        { _id: u.owner },
+        {
+          $set: {
+            owner: u.owner,
+            smartWallet: u.smartWallet,
+            poolRuleId: u.poolRuleId,
+            usdcRuleId: u.usdcRuleId,
+            createdAt: u.createdAt,
+          },
+        },
+        { upsert: true },
+      );
+    },
+    async listUsers() {
+      const coll = await getCollection<UserDoc>("users");
+      const rows = await coll
+        .find({}, { projection: { _id: 0 } })
+        .sort({ createdAt: 1, owner: 1 })
+        .toArray();
+      return rows as UserRegistration[];
+    },
+    async getUser(owner) {
+      const coll = await getCollection<UserDoc>("users");
+      const row = await coll.findOne({ _id: owner }, { projection: { _id: 0 } });
+      return (row as UserRegistration | null) ?? null;
+    },
+    async removeUser(owner) {
+      const users = await getCollection<UserDoc>("users");
+      const u = await users.findOne({ _id: owner });
+      if (!u) return false;
+      await users.deleteOne({ _id: owner });
+      const positions = await getCollection<PositionDoc>("positions");
+      await positions.deleteOne({ _id: u.smartWallet });
+      return true;
+    },
+    async setUserPosition(smartWallet, p) {
+      const coll = await getCollection<PositionDoc>("positions");
+      await coll.updateOne(
+        { _id: smartWallet },
+        { $set: { poolId: p.poolId, amount: p.amountUsdc.toString() } },
+        { upsert: true },
+      );
+    },
+    async getUserPosition(smartWallet) {
+      const coll = await getCollection<PositionDoc>("positions");
+      const row = await coll.findOne({ _id: smartWallet });
+      if (!row) return idleUser();
+      return { poolId: row.poolId, amountUsdc: BigInt(row.amount) };
+    },
+    async clearRegistry() {
+      const users = await getCollection<UserDoc>("users");
+      const removed = await users.countDocuments({});
+      await users.deleteMany({});
+      const positions = await getCollection<PositionDoc>("positions");
+      await positions.deleteMany({});
+      return removed;
+    },
+    async userCount() {
+      const coll = await getCollection<UserDoc>("users");
+      return coll.countDocuments({});
+    },
+    registryStoreId() {
+      return "mongo:yieldseeker";
+    },
+  };
+}
+
+// ── In-memory implementation (tests / no MONGODB_URI) ─────────────────────────
+
+interface MemoryStore {
+  users: Map<string, UserRegistration>;
+  positions: Map<string, Position>;
+  id?: string;
+}
+function memStore(): MemoryStore {
+  const g = globalThis as unknown as { __ysRegistry?: MemoryStore };
   return (g.__ysRegistry ??= { users: new Map(), positions: new Map() });
 }
 
-// ── Users ────────────────────────────────────────────────────────────────────
-
-/**
- * Register (or upsert) a user's smart account + agent context-rule ids. `owner`
- * is the key, so re-registering the same owner replaces its row in place. The
- * insertion ORDER is preserved (Map keeps insertion order), which gives a stable
- * loop order; re-registering an existing owner keeps its original position.
- */
-export function registerUser(u: UserRegistration): void {
-  store().users.set(u.owner, { ...u });
+export function createMemoryRegistry(): Registry {
+  return {
+    async registerUser(u) {
+      memStore().users.set(u.owner, { ...u });
+    },
+    async listUsers() {
+      return [...memStore().users.values()].sort(
+        (a, b) => a.createdAt - b.createdAt || a.owner.localeCompare(b.owner),
+      );
+    },
+    async getUser(owner) {
+      return memStore().users.get(owner) ?? null;
+    },
+    async removeUser(owner) {
+      const s = memStore();
+      const u = s.users.get(owner);
+      if (!u) return false;
+      s.users.delete(owner);
+      s.positions.delete(u.smartWallet);
+      return true;
+    },
+    async setUserPosition(smartWallet, p) {
+      memStore().positions.set(smartWallet, { ...p });
+    },
+    async getUserPosition(smartWallet) {
+      return memStore().positions.get(smartWallet) ?? idleUser();
+    },
+    async clearRegistry() {
+      const s = memStore();
+      const removed = s.users.size;
+      s.users.clear();
+      s.positions.clear();
+      return removed;
+    },
+    async userCount() {
+      return memStore().users.size;
+    },
+    registryStoreId() {
+      const s = memStore();
+      if (!s.id) s.id = `${process.pid}:${Math.random().toString(36).slice(2, 10)}`;
+      return s.id;
+    },
+  };
 }
 
-/**
- * All registered users, oldest first. Maps preserve insertion order, but a
- * re-registered owner keeps its slot, so we additionally sort by `createdAt`
- * (then owner) to stay deterministic — matching the previous SQLite ordering.
- */
-export function listUsers(): UserRegistration[] {
-  return [...store().users.values()].sort(
-    (a, b) => a.createdAt - b.createdAt || a.owner.localeCompare(b.owner),
-  );
+// ── Module-level singleton + delegating API ───────────────────────────────────
+// runtime.ts uses `import * as registry`, so we keep the flat function surface
+// and pick the implementation once (Mongo when configured, else in-memory).
+
+let impl: Registry | null = null;
+function reg(): Registry {
+  return (impl ??= process.env.MONGODB_URI ? createMongoRegistry() : createMemoryRegistry());
 }
 
-/** Look up one user by owner G-address, or null if not registered. */
-export function getUser(owner: string): UserRegistration | null {
-  return store().users.get(owner) ?? null;
-}
-
-/**
- * Remove a single user (and any position for their smart wallet) so the demo
- * onboarding re-appears for that owner. Returns true if a user was removed.
- */
-export function removeUser(owner: string): boolean {
-  const s = store();
-  const u = s.users.get(owner);
-  if (!u) return false;
-  s.users.delete(owner);
-  s.positions.delete(u.smartWallet);
-  return true;
-}
-
-// ── Per-user positions (keyed by smart wallet) ────────────────────────────────
-
-/** Persist the position for a specific smart wallet (upsert). */
-export function setUserPosition(smartWallet: string, p: Position): void {
-  store().positions.set(smartWallet, { ...p });
-}
-
-/** Read a smart wallet's position; idle (null pool, 0) if none stored. */
-export function getUserPosition(smartWallet: string): Position {
-  return store().positions.get(smartWallet) ?? { poolId: null, amountUsdc: 0n };
-}
-
-// ── Reset ──────────────────────────────────────────────────────────────────--
-
-/**
- * Clear the ENTIRE registry (all users + positions) so the whole demo can be
- * re-run without restarting the server. Returns the number of users removed.
- */
-export function clearRegistry(): number {
-  const s = store();
-  const removed = s.users.size;
-  s.users.clear();
-  s.positions.clear();
-  return removed;
-}
-
-/** Current registered-user count (used by `/api/reset` + the sharing probe). */
-export function userCount(): number {
-  return store().users.size;
-}
-
-/**
- * Diagnostic: prove the `globalThis` registry is the SAME object across module
- * instances. Returns a stable per-process id derived from the live store object,
- * so the route handler + the loop can be observed pointing at one store.
- * (We tag the store with a hidden id the first time this is called.)
- */
-export function registryStoreId(): string {
-  const s = store() as RegistryStore & { __id?: string };
-  if (!s.__id) {
-    s.__id = `${process.pid}:${Math.random().toString(36).slice(2, 10)}`;
-  }
-  return s.__id;
-}
+export const registerUser = (u: UserRegistration) => reg().registerUser(u);
+export const listUsers = () => reg().listUsers();
+export const getUser = (owner: string) => reg().getUser(owner);
+export const removeUser = (owner: string) => reg().removeUser(owner);
+export const setUserPosition = (smartWallet: string, p: Position) =>
+  reg().setUserPosition(smartWallet, p);
+export const getUserPosition = (smartWallet: string) => reg().getUserPosition(smartWallet);
+export const clearRegistry = () => reg().clearRegistry();
+export const userCount = () => reg().userCount();
+export const registryStoreId = () => reg().registryStoreId();

@@ -43,7 +43,7 @@ import {
 } from "../src/lib/smartAccount.js";
 import { createPolicySignerWallet } from "../src/lib/wallet.js";
 import { createSorobanClient, createExecutor } from "../src/lib/executor.js";
-import { createDb } from "../src/lib/db.js";
+import * as registry from "../src/lib/registry.js";
 
 // ── Proven testnet ids (PROVEN-IDS.txt) ──────────────────────────────────────
 const RPC = process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org";
@@ -155,16 +155,20 @@ async function main() {
   const poolRuleId = afterCount - 1; // newest rule
   console.log(`    rules after = ${afterCount} → POOL rule id = ${poolRuleId}, USDC rule id = ${USDC_RULE_ID}`);
 
-  // ── store in the app's registry (the same SQLite the runtime uses) ──
-  const db = createDb("yieldseeker.sqlite");
-  db.registerUser({
+  // ── store in the app's registry ──
+  // The runtime now holds the per-user registry IN-MEMORY (globalThis), not in
+  // SQLite, so it resets per demo. This standalone script registers into its own
+  // process's in-memory store purely to exercise the same code path + position
+  // bookkeeping; it does NOT share state with a running Next server (a fresh
+  // process has an empty registry — re-onboard via the UI to register there).
+  await registry.registerUser({
     owner: owner.publicKey(),
     smartWallet: SMART_ACCOUNT,
     poolRuleId,
     usdcRuleId: USDC_RULE_ID,
     createdAt: Math.floor(Date.now() / 1000),
   });
-  console.log("    registered user in yieldseeker.sqlite registry:", JSON.stringify(db.getUser(owner.publicKey())));
+  console.log("    registered user in in-memory registry:", JSON.stringify(registry.getUser(owner.publicKey())));
 
   // ── STEP 2: cap headroom + balance → choose supply amount ──
   const saBal = await usdcBalance(SMART_ACCOUNT);
@@ -219,10 +223,10 @@ async function main() {
   if (!res.success) throw new Error("per-user agent supply FAILED: " + res.error);
   const txHash = res.hashes[res.hashes.length - 1];
 
-  // persist per-user position via the app db (same as the runtime would)
-  const prev = db.getUserPosition(SMART_ACCOUNT);
+  // persist per-user position via the registry (same as the runtime)
+  const prev = await registry.getUserPosition(SMART_ACCOUNT);
   const newAmount = (prev.poolId === POOL ? prev.amountUsdc : 0n) + amount;
-  db.setUserPosition(SMART_ACCOUNT, { poolId: POOL, amountUsdc: newAmount });
+  await registry.setUserPosition(SMART_ACCOUNT, { poolId: POOL, amountUsdc: newAmount });
 
   // ── STEP 4: confirm on-chain ──
   const poolSupplyAfter = await poolUsdcSupply();

@@ -145,7 +145,7 @@ export async function POST(req: Request) {
     });
     const usdcRuleId = afterUsdc - 1;
 
-    rt.db.log(
+    await rt.db.log(
       "authorize",
       `agent authorized on SA ${smartWallet} (pool rule ${poolRuleId}, usdc rule ${usdcRuleId})`,
       { smartWallet, poolRuleId, usdcRuleId, beforeCount, afterUsdc },

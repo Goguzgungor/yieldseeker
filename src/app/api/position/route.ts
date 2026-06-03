@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
 // current position (BigInt stroops as a decimal string) merged with the latest
 // agent decision so the UI can highlight the chosen pool + show its rationale.
 export async function GET() {
-  const pos = getSerializedPosition();
-  const decision = getDecision();
+  const pos = await getSerializedPosition();
+  const decision = await getDecision();
   return NextResponse.json({
     ...pos,
     chosenPoolId: decision.chosenPoolId,

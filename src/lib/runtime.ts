@@ -14,7 +14,7 @@ import { createDb, type Db } from "./db";
 import * as registry from "./registry";
 import { createBlendReader, createBlendSource, scanSource, type BlendReader } from "./scanner";
 import { createDefindexSource } from "./defindex";
-import { createBlendOnchainPoolSource, createPoolDiscovery, isDiscoveryCacheFresh, DISCOVERY_TTL_MS, type PoolDiscovery } from "./discovery";
+import { createBlendOnchainPoolSource, createPoolDiscovery, type PoolDiscovery } from "./discovery";
 import { createSorobanClient, createExecutor, type Executor } from "./executor";
 import { createKeypairWallet, createPolicySignerWallet } from "./wallet";
 import { createAnthropicLlm, decide, type LlmClient } from "./agent";
@@ -66,12 +66,10 @@ export interface Runtime {
   /** Latest agent decision (chosen pool + rationale + action); null until first decide. */
   lastDecision: LatestDecision | null;
   lastRebalanceAt: number;
+  /** Idempotency guard: true while a tick is in flight (never overlap ticks). */
   running: boolean;
-  loopStarted: boolean;
-  /** Discovered Blend pool ids (cached once at loop start); null until resolved. */
+  /** Discovered Blend pool ids (cached in-process); null until first resolved. */
   poolIds: string[] | null;
-  /** setInterval handle for the tick loop, if started. */
-  timer: ReturnType<typeof setInterval> | null;
 }
 
 let runtime: Runtime | null = null;
@@ -97,7 +95,7 @@ export function getRuntime(): Runtime {
     );
   }
 
-  const db = createDb("yieldseeker.sqlite");
+  const db = createDb();
 
   // Scan side: mainnet reader (read-only, no signing).
   const reader = createBlendReader(cfg.scanRpcUrl, cfg.scanNetworkPassphrase, cfg.scanUsdcContractId);
@@ -159,9 +157,7 @@ export function getRuntime(): Runtime {
     lastDecision: null,
     lastRebalanceAt: 0,
     running: false,
-    loopStarted: false,
     poolIds: null,
-    timer: null,
   };
   return runtime;
 }
@@ -224,8 +220,16 @@ function supplyForUser(rt: Runtime, user: UserRegistration, amount: bigint): Pro
   return createExecutor(client, wallet).deposit(rt.cfg.execPoolId, amount);
 }
 
-/** One scan→score→decide→execute cycle. Mirrors the old index.ts loop body. */
-async function tick(rt: Runtime): Promise<void> {
+/**
+ * One scan→score→decide(→execute) cycle.
+ *
+ * `doExecute` gates the money-moving side: when false the cycle only refreshes
+ * the cached scan + decision (used by the lazy/manual scan refresh, which must
+ * be side-effect-free); when true it also runs the per-user supply (the daily
+ * Cron / autonomous tick). Scan + decision are cached either way so the UI is
+ * always fed.
+ */
+async function tick(rt: Runtime, doExecute: boolean): Promise<void> {
   if (rt.running) return; // idempotency: never overlap ticks
   rt.running = true;
   try {
@@ -250,12 +254,11 @@ async function tick(rt: Runtime): Promise<void> {
         // Cache the SCORED pools (deterministic; matches what runTick scores
         // internally) so the UI gets riskScore/eligible/reason without a re-scan.
         rt.lastScan = scorePools(s, rt.cfg.tolerance);
-        // Persist to DB so route handlers (which may run in a separate module
-        // instance) can read the latest snapshot regardless of which process
-        // writes vs. reads.
+        // Persist to Mongo so route handlers (separate serverless invocations)
+        // read the latest snapshot regardless of which one writes vs. reads.
         const scanAt = Date.now();
-        rt.db.setKV("lastScan", JSON.stringify(serializeScoredPools(rt.lastScan)));
-        rt.db.setKV("lastScanAt", String(scanAt));
+        await rt.db.setKV("lastScan", JSON.stringify(serializeScoredPools(rt.lastScan)));
+        await rt.db.setKV("lastScanAt", String(scanAt));
         return s;
       },
       tolerance: rt.cfg.tolerance,
@@ -268,17 +271,18 @@ async function tick(rt: Runtime): Promise<void> {
           chosenPoolId: decision.action === "rebalance" ? decision.toPool ?? null : null,
           rationale: decision.rationale,
         };
-        // Persist decision to DB for cross-instance visibility.
-        rt.db.setKV("lastDecision", JSON.stringify(rt.lastDecision));
+        // Persist decision to Mongo for cross-invocation visibility.
+        await rt.db.setKV("lastDecision", JSON.stringify(rt.lastDecision));
         return decision;
       },
       // Execution always targets the single testnet exec pool regardless of which
-      // mainnet pool had the best yield — multi-pool exec is future work.
-      // In smart-account mode these are no-ops (per-user loop does the work).
+      // mainnet pool had the best yield — multi-pool exec is future work. In
+      // smart-account mode these are no-ops (the per-user loop does the work);
+      // in keypair mode they only fire when this is an executing tick.
       rebalance: (_fromMainnet, _toMainnet, a) =>
-        perUser ? noopExec() : rt.executor.deposit(rt.cfg.execPoolId, a),
+        perUser || !doExecute ? noopExec() : rt.executor.deposit(rt.cfg.execPoolId, a),
       deposit: (_chosenMainnetPool, a) =>
-        perUser ? noopExec() : rt.executor.deposit(rt.cfg.execPoolId, a),
+        perUser || !doExecute ? noopExec() : rt.executor.deposit(rt.cfg.execPoolId, a),
       commitPosition: (p) => rt.db.setPosition(p),
       log: (k, m, meta) => rt.db.log(k, m, meta),
       recordRebalance: (a) => rt.db.recordRebalance(a),
@@ -294,13 +298,13 @@ async function tick(rt: Runtime): Promise<void> {
 
     // ── PER-USER execution (ARMA model) ──────────────────────────────────────
     // The decision was made ONCE above; now supply each registered user's idle
-    // USDC into the chosen exec pool via THEIR smart account. No-op (beyond
-    // scan/decide) when there are no registered users.
-    if (perUser) {
+    // USDC into the chosen exec pool via THEIR smart account. Only on executing
+    // ticks (the daily Cron) — the lazy/manual scan refresh passes doExecute=false.
+    if (perUser && doExecute) {
       const chosenPoolId = rt.lastDecision?.chosenPoolId ?? null;
       const result = await runPerUserExecution(
         {
-          users: registry.listUsers(),
+          users: await registry.listUsers(),
           execPoolId: rt.cfg.execPoolId,
           supplyForUser: (user, amount) => supplyForUser(rt, user, amount),
           getUserPosition: (sw) => registry.getUserPosition(sw),
@@ -314,28 +318,24 @@ async function tick(rt: Runtime): Promise<void> {
       if (result.supplied > 0) rt.lastRebalanceAt = now;
     }
   } catch (e) {
-    rt.db.log("error", `tick failed: ${(e as Error).message}`);
+    await rt.db.log("error", `tick failed: ${(e as Error).message}`);
   } finally {
     rt.running = false;
   }
 }
 
-/**
- * Persist a successful discovery result to the DB cache so future process
- * restarts can skip the blocking on-chain fetch.
- */
-function cacheDiscovery(rt: Runtime, poolIds: string[]): void {
-  rt.db.setKV("discoveredPools", JSON.stringify(poolIds));
-  rt.db.setKV("discoveredAt", String(Date.now()));
+/** Persist a discovery result to Mongo so future invocations skip the on-chain fetch. */
+async function cacheDiscovery(rt: Runtime, poolIds: string[]): Promise<void> {
+  await rt.db.setKV("discoveredPools", JSON.stringify(poolIds));
+  await rt.db.setKV("discoveredAt", String(Date.now()));
 }
 
-/**
- * Read the cached discovery result from the DB, if any.
- * Returns `{ poolIds, discoveredAt }` or `null` if no cache entry exists.
- */
-function readDiscoveryCache(rt: Runtime): { poolIds: string[]; discoveredAt: number } | null {
-  const raw = rt.db.getKV("discoveredPools");
-  const atRaw = rt.db.getKV("discoveredAt");
+/** Read the cached discovery result from Mongo, or null if none. */
+async function readDiscoveryCache(
+  rt: Runtime,
+): Promise<{ poolIds: string[]; discoveredAt: number } | null> {
+  const raw = await rt.db.getKV("discoveredPools");
+  const atRaw = await rt.db.getKV("discoveredAt");
   if (!raw || !atRaw) return null;
   try {
     const poolIds = JSON.parse(raw) as string[];
@@ -348,104 +348,106 @@ function readDiscoveryCache(rt: Runtime): { poolIds: string[]; discoveredAt: num
 }
 
 /**
- * Start the continuous agent loop. Idempotent: only the first call starts it.
- *
- * Discovery strategy (fast startup):
- *  - If the DB cache is fresh (within DISCOVERY_TTL_MS), use it immediately and
- *    kick a background refresh without blocking startup.
- *  - If the cache is stale but present, use the cached ids immediately (so the
- *    first tick doesn't wait), then refresh in the background.
- *  - If no cache exists, discover now (blocks briefly), cache the result.
- *  - On-chain failure always falls back to cfg.scanBlendPoolIds.
- *
- * After discovery, runs one tick immediately then schedules ticks every
- * `scanIntervalSec`.
+ * Resolve (once per warm process) the Blend pool ids to scan: in-memory cache →
+ * Mongo discovery cache → fresh on-chain discovery → curated fallback. No
+ * background refresh — on serverless any work after the response is frozen, so
+ * the daily Cron is what re-discovers.
  */
-export async function startLoop(): Promise<void> {
-  const rt = getRuntime();
-  if (rt.loopStarted) return;
-  rt.loopStarted = true;
+async function ensurePoolIds(rt: Runtime): Promise<void> {
+  if (rt.poolIds && rt.poolIds.length) return;
 
-  // Diagnostic for the globalThis-sharing probe: record the registry store id
-  // THIS (loop) module instance sees. A route handler's `GET /api/reset` reports
-  // its own store id; matching ids prove the in-memory registry is shared across
-  // the loop↔route boundary (see src/lib/registry.ts).
-  rt.db.log("registry", `loop registry store id = ${registry.registryStoreId()}`, {
-    storeId: registry.registryStoreId(),
-    pid: process.pid,
-  });
-
-  const cached = readDiscoveryCache(rt);
-
-  if (cached) {
-    // Use cached ids immediately — no blocking RPC call.
+  const cached = await readDiscoveryCache(rt);
+  if (cached && cached.poolIds.length) {
     rt.poolIds = cached.poolIds;
-    const fresh = isDiscoveryCacheFresh(cached.discoveredAt);
-    rt.db.log(
-      "discovery",
-      `using ${cached.poolIds.length} cached pool id(s) (${fresh ? "fresh" : "stale — refreshing in background"})`,
-      { poolIds: cached.poolIds, source: "cache", discoveredAt: cached.discoveredAt },
-    );
-
-    // Refresh in the background (stale → priority; fresh → lower priority).
-    // Never let this block the tick loop.
-    void (async () => {
-      try {
-        const discovered = await rt.poolDiscovery.discoverPoolIds();
-        if (!arraysEqual(discovered, rt.poolIds ?? [])) {
-          rt.poolIds = discovered;
-          rt.db.log(
-            "discovery",
-            `background refresh: updated to ${discovered.length} pool id(s)`,
-            { poolIds: discovered, source: "onchain" },
-          );
-        }
-        cacheDiscovery(rt, discovered);
-      } catch (e) {
-        // Background refresh failure is non-fatal; cached ids remain in use.
-        rt.db.log(
-          "discovery",
-          `background refresh failed (cached ids remain): ${(e as Error).message}`,
-          { source: "fallback" },
-        );
-      }
-    })();
-  } else {
-    // No cache — discover now (blocking, but only on first-ever run).
-    try {
-      const discovered = await rt.poolDiscovery.discoverPoolIds();
-      rt.poolIds = discovered;
-      cacheDiscovery(rt, discovered);
-      const fromOnchain = !arraysEqual(discovered, rt.cfg.scanBlendPoolIds);
-      rt.db.log(
-        "discovery",
-        `discovered ${discovered.length} Blend pool(s) (${fromOnchain ? "on-chain" : "fallback"})`,
-        { poolIds: discovered, source: fromOnchain ? "onchain" : "fallback" },
-      );
-    } catch (e) {
-      rt.poolIds = rt.cfg.scanBlendPoolIds;
-      rt.db.log(
-        "discovery",
-        `pool discovery failed, using ${rt.poolIds.length} fallback pool(s): ${(e as Error).message}`,
-        { poolIds: rt.poolIds, source: "fallback" },
-      );
-    }
+    await rt.db.log("discovery", `using ${cached.poolIds.length} cached pool id(s)`, {
+      poolIds: cached.poolIds,
+      source: "cache",
+      discoveredAt: cached.discoveredAt,
+    });
+    return;
   }
 
-  await tick(rt);
-  rt.timer = setInterval(() => {
-    void tick(rt);
+  try {
+    const discovered = await rt.poolDiscovery.discoverPoolIds();
+    rt.poolIds = discovered;
+    await cacheDiscovery(rt, discovered);
+    const fromOnchain = !arraysEqual(discovered, rt.cfg.scanBlendPoolIds);
+    await rt.db.log(
+      "discovery",
+      `discovered ${discovered.length} Blend pool(s) (${fromOnchain ? "on-chain" : "fallback"})`,
+      { poolIds: discovered, source: fromOnchain ? "onchain" : "fallback" },
+    );
+  } catch (e) {
+    rt.poolIds = rt.cfg.scanBlendPoolIds;
+    await rt.db.log(
+      "discovery",
+      `pool discovery failed, using ${rt.poolIds.length} fallback pool(s): ${(e as Error).message}`,
+      { poolIds: rt.poolIds, source: "fallback" },
+    );
+  }
+}
+
+/**
+ * Full autonomous tick: ensure pool ids, then scan → score → decide → execute
+ * (supply each registered user's idle USDC). This is what the daily Vercel Cron
+ * (`POST /api/tick`) invokes. The original 30s `setInterval` loop is gone —
+ * serverless has no persistent process to host it.
+ */
+export async function runAgentTick(): Promise<void> {
+  const rt = getRuntime();
+  await ensurePoolIds(rt);
+  await tick(rt, true);
+}
+
+/**
+ * Side-effect-free refresh: ensure pool ids, then scan → score → decide and
+ * cache the result WITHOUT moving any funds. Used to populate the cache lazily.
+ */
+export async function runScanRefresh(): Promise<void> {
+  const rt = getRuntime();
+  await ensurePoolIds(rt);
+  await tick(rt, false);
+}
+
+/**
+ * Lazy "run on app start" behavior for serverless: if no scan has ever been
+ * cached, run one side-effect-free refresh so the first dashboard load has data.
+ * Thereafter the daily Cron keeps it fresh. Best-effort — failures are swallowed
+ * so the dashboard still renders whatever (if anything) is cached.
+ */
+export async function ensureScanPopulated(): Promise<void> {
+  const rt = getRuntime();
+  try {
+    const at = await rt.db.getKV("lastScanAt");
+    if (!at) await runScanRefresh();
+  } catch {
+    /* serve cached data on any refresh error */
+  }
+}
+
+/**
+ * Continuous in-process loop for LONG-LIVED servers only (local `next dev` /
+ * `next start`). No-op on Vercel, where there is no persistent process — the
+ * daily Cron + lazy {@link ensureScanPopulated} drive ticks instead. Idempotent.
+ */
+export async function startLocalLoop(): Promise<void> {
+  if (process.env.VERCEL) return; // serverless → Cron-driven, not loop-driven
+  const rt = getRuntime();
+  await ensurePoolIds(rt);
+  await tick(rt, true);
+  setInterval(() => {
+    void tick(rt, true);
   }, rt.cfg.scanIntervalSec * 1000);
 }
 
 // ── Accessors for the route handlers ────────────────────────────────────────
 
-export function getPosition(): Position {
+export function getPosition(): Promise<Position> {
   return getRuntime().db.getPosition();
 }
 
-export function getSerializedPosition(): SerializedPosition {
-  return serializePosition(getRuntime().db.getPosition());
+export async function getSerializedPosition(): Promise<SerializedPosition> {
+  return serializePosition(await getRuntime().db.getPosition());
 }
 
 export function getRecentLog(n = 50) {
@@ -473,10 +475,10 @@ export const RegisterInput = z.object({
 export type RegisterInputT = z.infer<typeof RegisterInput>;
 
 /** Register (upsert) a user's smart account + agent rule ids; returns the row. */
-export function registerUser(input: RegisterInputT): UserRegistration {
+export async function registerUser(input: RegisterInputT): Promise<UserRegistration> {
   const rt = getRuntime();
   // Preserve the original createdAt on re-register so loop ordering is stable.
-  const existing = registry.getUser(input.owner);
+  const existing = await registry.getUser(input.owner);
   const reg: UserRegistration = {
     owner: input.owner,
     smartWallet: input.smartWallet,
@@ -484,8 +486,8 @@ export function registerUser(input: RegisterInputT): UserRegistration {
     usdcRuleId: input.usdcRuleId,
     createdAt: existing?.createdAt ?? Math.floor(Date.now() / 1000),
   };
-  registry.registerUser(reg);
-  rt.db.log("register", `registered user ${reg.owner.slice(0, 8)}… → SA ${reg.smartWallet}`, {
+  await registry.registerUser(reg);
+  await rt.db.log("register", `registered user ${reg.owner.slice(0, 8)}… → SA ${reg.smartWallet}`, {
     smartWallet: reg.smartWallet,
     poolRuleId: reg.poolRuleId,
     usdcRuleId: reg.usdcRuleId,
@@ -494,51 +496,53 @@ export function registerUser(input: RegisterInputT): UserRegistration {
 }
 
 /** All registered users, each with their current per-user position (serialized). */
-export function listUsers(): Array<UserRegistration & { position: SerializedPosition }> {
-  return registry.listUsers().map((u) => ({
-    ...u,
-    position: serializePosition(registry.getUserPosition(u.smartWallet)),
-  }));
+export async function listUsers(): Promise<Array<UserRegistration & { position: SerializedPosition }>> {
+  const users = await registry.listUsers();
+  return Promise.all(
+    users.map(async (u) => ({
+      ...u,
+      position: serializePosition(await registry.getUserPosition(u.smartWallet)),
+    })),
+  );
 }
 
 /** One user's registration + position by owner, or null if not registered. */
-export function getUserWithPosition(
+export async function getUserWithPosition(
   owner: string,
-): (UserRegistration & { position: SerializedPosition }) | null {
-  const u = registry.getUser(owner);
+): Promise<(UserRegistration & { position: SerializedPosition }) | null> {
+  const u = await registry.getUser(owner);
   if (!u) return null;
-  return { ...u, position: serializePosition(registry.getUserPosition(u.smartWallet)) };
+  return { ...u, position: serializePosition(await registry.getUserPosition(u.smartWallet)) };
 }
 
 /**
- * Remove ONE user from the in-memory registry (the demo "disconnect this user"
- * affordance), so the onboarding re-appears for that owner. Returns true if the
- * owner was registered. Logs the removal for the activity ticker.
+ * Remove ONE user from the registry (the demo "disconnect this user" affordance),
+ * so the onboarding re-appears for that owner. Returns true if the owner was
+ * registered. Logs the removal for the activity ticker.
  */
-export function unregisterUser(owner: string): boolean {
+export async function unregisterUser(owner: string): Promise<boolean> {
   const rt = getRuntime();
-  const removed = registry.removeUser(owner);
+  const removed = await registry.removeUser(owner);
   if (removed) {
-    rt.db.log("reset", `unregistered user ${owner.slice(0, 8)}… (demo reset)`, { owner });
+    await rt.db.log("reset", `unregistered user ${owner.slice(0, 8)}… (demo reset)`, { owner });
   }
   return removed;
 }
 
 /**
- * Clear the ENTIRE in-memory registry (all users + positions) so the whole demo
- * can be re-run without a server restart. Returns the number of users removed.
+ * Clear the ENTIRE registry (all users + positions) so the whole demo can be
+ * re-run. Returns the number of users removed.
  */
-export function resetRegistry(): number {
+export async function resetRegistry(): Promise<number> {
   const rt = getRuntime();
-  const removed = registry.clearRegistry();
-  rt.db.log("reset", `cleared registry — ${removed} user(s) removed (demo reset)`, { removed });
+  const removed = await registry.clearRegistry();
+  await rt.db.log("reset", `cleared registry — ${removed} user(s) removed (demo reset)`, { removed });
   return removed;
 }
 
 /**
- * Diagnostic accessor: the live `globalThis` registry store id, used by the
- * sharing probe to confirm the loop and the route handlers point at the SAME
- * in-process store. See `src/lib/registry.ts`.
+ * Diagnostic accessor: the registry store id. With Mongo this is a constant
+ * ("mongo:yieldseeker"); kept for the legacy sharing probe / `/api/reset` GET.
  */
 export function registryStoreId(): string {
   return registry.registryStoreId();
@@ -552,18 +556,18 @@ export interface ScanSnapshot {
 }
 
 /**
- * Most-recent SCORED scan — reads from the SQLite DB so it is consistent
- * regardless of which module instance (agent loop vs. route handler) calls it.
- * Falls back to the in-memory copy when the DB has no snapshot yet (e.g. very
- * first request before the first tick completes).
+ * Most-recent SCORED scan — reads from Mongo so it is consistent regardless of
+ * which serverless invocation (Cron tick vs. route handler) wrote it. Falls back
+ * to the in-memory copy when Mongo has no snapshot yet (very first request before
+ * the first tick completes).
  *
  * Returns a {@link ScanSnapshot} with `updatedAt` so the UI can show how fresh
  * the cached data is.
  */
-export function getLastScan(): ScanSnapshot {
+export async function getLastScan(): Promise<ScanSnapshot> {
   const rt = getRuntime();
-  const raw = rt.db.getKV("lastScan");
-  const atRaw = rt.db.getKV("lastScanAt");
+  const raw = await rt.db.getKV("lastScan");
+  const atRaw = await rt.db.getKV("lastScanAt");
   const updatedAt = atRaw ? Number(atRaw) || null : null;
 
   if (raw) {
@@ -578,13 +582,12 @@ export function getLastScan(): ScanSnapshot {
 }
 
 /**
- * Latest agent decision — reads from the SQLite DB so it is consistent
- * regardless of which module instance (agent loop vs. route handler) calls it.
- * Falls back to the in-memory copy / default when the DB has no entry yet.
+ * Latest agent decision — reads from Mongo so it is consistent across serverless
+ * invocations. Falls back to the in-memory copy / default when Mongo has no entry.
  */
-export function getDecision(): LatestDecision {
+export async function getDecision(): Promise<LatestDecision> {
   const rt = getRuntime();
-  const raw = rt.db.getKV("lastDecision");
+  const raw = await rt.db.getKV("lastDecision");
   if (raw) {
     try {
       return JSON.parse(raw) as LatestDecision;

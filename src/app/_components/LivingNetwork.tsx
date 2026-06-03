@@ -3,11 +3,12 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import NetworkGraph from "./NetworkGraph";
 import AnalysisPanel from "./AnalysisPanel";
+import TransactionsPanel from "./TransactionsPanel";
 import Onboarding from "./Onboarding";
 import { useLivingData } from "./useLivingData";
 import { useFreighter } from "./useFreighter";
 import { useOnboarding } from "./useOnboarding";
-import { formatApy, formatUsdc, networkLabel, truncateAddress } from "./format";
+import { extractAgentTxs, formatApy, networkLabel, truncateAddress } from "./format";
 import { FREIGHTER_INSTALL_URL, testnetTxUrl } from "./links";
 
 // Known yield-source protocols (rail order + glyph). A dot lights up when the
@@ -78,7 +79,11 @@ export default function LivingNetwork() {
   // Distinct protocols present in the latest scan → which rail dots light up.
   const activeProtocols = useMemo(() => new Set(pools.map((p) => p.protocol)), [pools]);
 
-  const idleUsdc = formatUsdc(position?.amountUsdc);
+  // The agent's real on-chain transactions (supplies into our Blend testnet
+  // pool), flattened from the activity log. The newest one is surfaced on the
+  // chosen pool node so it's obvious WHERE the money went.
+  const agentTxs = useMemo(() => extractAgentTxs(activity), [activity]);
+  const latestTxHash = agentTxs[0]?.hash ?? null;
   const latestLog = activity[0];
   const active = scanning && !paused;
 
@@ -147,7 +152,7 @@ export default function LivingNetwork() {
             // Show empty stage only on genuine cold start (no prior snapshot).
             // If there IS a cached snapshot but pools still empty (corrupt/raced),
             // fall through to NetworkGraph with empty array (renders nothing).
-            <EmptyStage loading={loading || scanUpdatedAt == null} idleUsdc={idleUsdc} />
+            <EmptyStage loading={loading || scanUpdatedAt == null} />
           ) : (
             <NetworkGraph
               pools={pools}
@@ -155,8 +160,12 @@ export default function LivingNetwork() {
               scanning={active}
               selectedId={selectedId}
               onSelect={setSelectedId}
+              chosenTxHash={latestTxHash}
             />
           )}
+
+          {/* agent transactions feed (right-docked) */}
+          <TransactionsPanel txs={agentTxs} />
 
           {/* activity ticker */}
           {latestLog && (
@@ -194,7 +203,7 @@ export default function LivingNetwork() {
         <div style={styles.bottom}>
           <Stat label="Pools" value={loading ? "—" : String(pools.length)} />
           <Stat label="Best APY" value={bestApy != null ? formatApy(bestApy) : "—"} />
-          <Stat label="Idle USDC" value={loading ? "—" : idleUsdc} />
+          <Stat label="Agent TXs" value={loading ? "—" : String(agentTxs.length)} />
           {onboarding.registered ? (
             <button
               type="button"
@@ -280,14 +289,14 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function EmptyStage({ loading, idleUsdc }: { loading: boolean; idleUsdc: string }) {
+function EmptyStage({ loading }: { loading: boolean }) {
   return (
     <div style={styles.empty}>
       <div className="ys-cloud" style={styles.cloud} />
       <div style={styles.center}>
         <div className={loading ? "ys-ring ys-ring-pulse" : "ys-ring"} style={styles.ring} />
         <div style={styles.centerName}>YIELDSEEKER AGENT</div>
-        <div style={styles.centerAmt}>{idleUsdc} USDC idle</div>
+        <div style={styles.centerAmt}>Autonomous yield agent</div>
         <div style={styles.centerHint}>
           {loading ? "first scan in progress…" : "awaiting first scan result…"}
         </div>

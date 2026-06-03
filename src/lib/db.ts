@@ -1,71 +1,153 @@
-import Database from "better-sqlite3";
 import type { Position } from "./types";
+import { getCollection } from "./mongo";
 
 /**
- * SQLite-backed state for the SHARED agent (the single legacy position, the
- * activity log, the rebalance ledger, and the cross-instance KV cache used for
- * scan snapshots / decisions / pool discovery).
+ * Async, MongoDB-backed state for the SHARED agent (the single legacy position,
+ * the activity log, the rebalance ledger, and the cross-instance KV cache used
+ * for scan snapshots / decisions / pool discovery).
  *
- * NOTE: the PER-USER registry (users + positions) deliberately does NOT live
- * here anymore — it is held in an in-memory `globalThis` store (see
- * `src/lib/registry.ts`) so each demo run / explicit reset re-shows the
- * Freighter onboarding. The legacy `users` / `positions` tables were removed.
+ * WHY async + Mongo (was sync better-sqlite3): on Vercel the filesystem is
+ * read-only and nothing is shared across function invocations, so a local
+ * SQLite file cannot hold state. Mongo is an external store every invocation can
+ * reach. The trade-off is that every method is now a Promise — callers await.
+ *
+ * `createDb()` returns the Mongo implementation when MONGODB_URI is set, and an
+ * in-memory implementation otherwise (used by the test suite, which runs with no
+ * connection string). Both satisfy the same {@link Db} interface.
+ *
+ * NOTE: the PER-USER registry (users + positions) lives in `src/lib/registry.ts`
+ * (also Mongo-backed now) — not here.
  */
-export function createDb(path = "yieldseeker.sqlite") {
-  const db = new Database(path);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS position (id INTEGER PRIMARY KEY CHECK (id=1), poolId TEXT, amount TEXT);
-    CREATE TABLE IF NOT EXISTS activity (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, kind TEXT, message TEXT, meta TEXT);
-    CREATE TABLE IF NOT EXISTS rebalances (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, amount TEXT);
-    CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-  `);
 
+/** Amounts are stored as decimal strings (Mongo has no native BigInt). */
+type PositionDoc = { _id: string; poolId: string | null; amount: string };
+type ActivityDoc = { ts: number; seq: number; kind: string; message: string; meta: string | null };
+type RebalanceDoc = { ts: number; amount: string };
+type KvDoc = { _id: string; value: string };
+
+export interface ActivityRow {
+  ts: number;
+  kind: string;
+  message: string;
+  meta: string | null;
+}
+
+export interface Db {
+  setPosition(p: Position): Promise<void>;
+  getPosition(): Promise<Position>;
+  log(kind: string, message: string, meta?: unknown, now?: number): Promise<void>;
+  recentLog(limit?: number): Promise<ActivityRow[]>;
+  recordRebalance(amount: bigint, now?: number): Promise<void>;
+  rebalancedSince(sinceTs: number): Promise<bigint>;
+  setKV(key: string, value: string): Promise<void>;
+  getKV(key: string): Promise<string | null>;
+}
+
+const POSITION_ID = "singleton";
+const nowSec = () => Math.floor(Date.now() / 1000);
+
+// ── Mongo implementation ──────────────────────────────────────────────────────
+
+function createMongoDb(): Db {
+  // A process-wide monotonic counter so logs written within the same wall-clock
+  // second still order deterministically (ts has 1s granularity).
+  let seq = 0;
   return {
-    setPosition(p: Position) {
-      db.prepare(`INSERT INTO position (id,poolId,amount) VALUES (1,?,?)
-                  ON CONFLICT(id) DO UPDATE SET poolId=excluded.poolId, amount=excluded.amount`)
-        .run(p.poolId, p.amountUsdc.toString());
+    async setPosition(p: Position) {
+      const coll = await getCollection<PositionDoc>("position");
+      await coll.updateOne(
+        { _id: POSITION_ID },
+        { $set: { poolId: p.poolId, amount: p.amountUsdc.toString() } },
+        { upsert: true },
+      );
     },
-    getPosition(): Position {
-      const row = db.prepare(`SELECT poolId, amount FROM position WHERE id=1`).get() as any;
+    async getPosition(): Promise<Position> {
+      const coll = await getCollection<PositionDoc>("position");
+      const row = await coll.findOne({ _id: POSITION_ID });
       if (!row) return { poolId: null, amountUsdc: 0n };
       return { poolId: row.poolId, amountUsdc: BigInt(row.amount) };
     },
-    log(kind: string, message: string, meta?: unknown, now = Math.floor(Date.now() / 1000)) {
-      db.prepare(`INSERT INTO activity (ts,kind,message,meta) VALUES (?,?,?,?)`)
-        .run(now, kind, message, meta ? JSON.stringify(meta) : null);
+    async log(kind, message, meta, now = nowSec()) {
+      const coll = await getCollection<ActivityDoc>("activity");
+      await coll.insertOne({
+        ts: now,
+        seq: seq++,
+        kind,
+        message,
+        meta: meta != null ? JSON.stringify(meta) : null,
+      });
     },
-    recentLog(limit = 50) {
-      return db.prepare(`SELECT ts,kind,message,meta FROM activity ORDER BY id DESC LIMIT ?`)
-        .all(limit) as { ts: number; kind: string; message: string; meta: string | null }[];
+    async recentLog(limit = 50): Promise<ActivityRow[]> {
+      const coll = await getCollection<ActivityDoc>("activity");
+      const rows = await coll
+        .find({}, { projection: { _id: 0, ts: 1, kind: 1, message: 1, meta: 1 } })
+        .sort({ ts: -1, seq: -1 })
+        .limit(limit)
+        .toArray();
+      return rows.map((r) => ({ ts: r.ts, kind: r.kind, message: r.message, meta: r.meta }));
     },
-    recordRebalance(amount: bigint, now = Math.floor(Date.now() / 1000)) {
-      db.prepare(`INSERT INTO rebalances (ts,amount) VALUES (?,?)`).run(now, amount.toString());
+    async recordRebalance(amount, now = nowSec()) {
+      const coll = await getCollection<RebalanceDoc>("rebalances");
+      await coll.insertOne({ ts: now, amount: amount.toString() });
     },
-    rebalancedSince(sinceTs: number): bigint {
-      const rows = db.prepare(`SELECT amount FROM rebalances WHERE ts >= ?`).all(sinceTs) as { amount: string }[];
+    async rebalancedSince(sinceTs): Promise<bigint> {
+      const coll = await getCollection<RebalanceDoc>("rebalances");
+      const rows = await coll.find({ ts: { $gte: sinceTs } }).toArray();
       return rows.reduce((s, r) => s + BigInt(r.amount), 0n);
     },
-    /**
-     * Persist an arbitrary JSON string under `key`. Used to share scan snapshots
-     * and agent decisions between the instrumentation process (agent loop) and the
-     * Next.js route handlers, which may resolve separate in-memory module instances.
-     */
-    setKV(key: string, value: string): void {
-      db.prepare(`INSERT INTO kv (key,value) VALUES (?,?)
-                  ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
-        .run(key, value);
+    async setKV(key, value) {
+      const coll = await getCollection<KvDoc>("kv");
+      await coll.updateOne({ _id: key }, { $set: { value } }, { upsert: true });
     },
-    /** Returns the stored value for `key`, or `null` if not yet set. */
-    getKV(key: string): string | null {
-      const row = db.prepare(`SELECT value FROM kv WHERE key=?`).get(key) as { value: string } | undefined;
+    async getKV(key): Promise<string | null> {
+      const coll = await getCollection<KvDoc>("kv");
+      const row = await coll.findOne({ _id: key });
       return row ? row.value : null;
     },
-
-    // ── Per-user smart-account registry (ARMA model) ────────────────────────
-    // MOVED OUT of SQLite into the in-memory `globalThis` store — see
-    // `src/lib/registry.ts`. Kept in-memory so each demo run / explicit reset
-    // re-shows the Freighter onboarding (a file-backed table would persist it).
   };
 }
-export type Db = ReturnType<typeof createDb>;
+
+// ── In-memory implementation (tests / no MONGODB_URI) ─────────────────────────
+
+export function createMemoryDb(): Db {
+  let position: Position = { poolId: null, amountUsdc: 0n };
+  const activity: ActivityRow[] = []; // newest pushed at the front
+  const rebalances: { ts: number; amount: bigint }[] = [];
+  const kv = new Map<string, string>();
+  return {
+    async setPosition(p) {
+      position = { poolId: p.poolId, amountUsdc: p.amountUsdc };
+    },
+    async getPosition() {
+      return { poolId: position.poolId, amountUsdc: position.amountUsdc };
+    },
+    async log(kind, message, meta, now = nowSec()) {
+      activity.unshift({ ts: now, kind, message, meta: meta != null ? JSON.stringify(meta) : null });
+    },
+    async recentLog(limit = 50) {
+      return activity.slice(0, limit);
+    },
+    async recordRebalance(amount, now = nowSec()) {
+      rebalances.push({ ts: now, amount });
+    },
+    async rebalancedSince(sinceTs) {
+      return rebalances.filter((r) => r.ts >= sinceTs).reduce((s, r) => s + r.amount, 0n);
+    },
+    async setKV(key, value) {
+      kv.set(key, value);
+    },
+    async getKV(key) {
+      return kv.has(key) ? kv.get(key)! : null;
+    },
+  };
+}
+
+/**
+ * Build the state DB. Mongo-backed when MONGODB_URI is configured (prod/Vercel),
+ * in-memory otherwise (the test suite + any local run without a connection
+ * string). Construction is cheap and does NOT connect — the first awaited method
+ * call opens the shared connection.
+ */
+export function createDb(): Db {
+  return process.env.MONGODB_URI ? createMongoDb() : createMemoryDb();
+}

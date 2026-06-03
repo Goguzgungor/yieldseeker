@@ -13,9 +13,9 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const owner = new URL(req.url).searchParams.get("owner");
   if (owner) {
-    const user = getUserWithPosition(owner);
+    const user = await getUserWithPosition(owner);
     if (!user) return NextResponse.json({ error: "not registered" }, { status: 404 });
     return NextResponse.json(user);
   }
-  return NextResponse.json({ users: listUsers() });
+  return NextResponse.json({ users: await listUsers() });
 }

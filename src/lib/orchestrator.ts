@@ -4,14 +4,14 @@ import type { PoolYield, Position, Decision, TxResult, RiskTolerance, UserRegist
 export interface TickDeps {
   scan: () => Promise<PoolYield[]>;
   tolerance: RiskTolerance;
-  getPosition: () => Position;
+  getPosition: () => Promise<Position>;
   decide: (ctx: { pools: any; position: Position; tolerance: RiskTolerance }) => Promise<Decision>;
   rebalance: (from: string, to: string, amount: bigint) => Promise<TxResult>;
   deposit: (to: string, amount: bigint) => Promise<TxResult>;
-  commitPosition: (p: Position) => void;
-  log: (kind: string, msg: string, meta?: unknown) => void;
-  recordRebalance: (amount: bigint) => void;
-  rebalancedSince: (sinceTs: number) => bigint;
+  commitPosition: (p: Position) => Promise<void>;
+  log: (kind: string, msg: string, meta?: unknown) => Promise<void>;
+  recordRebalance: (amount: bigint) => Promise<void>;
+  rebalancedSince: (sinceTs: number) => Promise<bigint>;
   minYieldDeltaBps: number; perTxCapStroops: bigint; dailyCapStroops: bigint;
   cooldownSec: number; lastRebalanceAt: number; now: number;
 }
@@ -19,39 +19,39 @@ export interface TickDeps {
 export async function runTick(d: TickDeps): Promise<{ acted: boolean; reason: string }> {
   const raw = await d.scan();
   const scored = scorePools(raw, d.tolerance);
-  d.log("scan", `scanned ${raw.length} pools, ${scored.filter((p) => p.eligible).length} eligible`);
+  await d.log("scan", `scanned ${raw.length} pools, ${scored.filter((p) => p.eligible).length} eligible`);
 
-  const pos = d.getPosition();
+  const pos = await d.getPosition();
   const decision = await d.decide({ pools: scored, position: pos, tolerance: d.tolerance });
   if (decision.action !== "rebalance" || !decision.toPool) {
-    d.log("decision", `hold: ${decision.rationale}`);
+    await d.log("decision", `hold: ${decision.rationale}`);
     return { acted: false, reason: "hold" };
   }
 
-  if (d.now - d.lastRebalanceAt < d.cooldownSec) { d.log("skip", "cooldown active"); return { acted: false, reason: "cooldown" }; }
+  if (d.now - d.lastRebalanceAt < d.cooldownSec) { await d.log("skip", "cooldown active"); return { acted: false, reason: "cooldown" }; }
 
   const target = scored.find((p) => p.poolId === decision.toPool);
   const current = scored.find((p) => p.poolId === pos.poolId);
   const best = bestPool(scored);
-  if (!target || !target.eligible) { d.log("skip", "target not eligible"); return { acted: false, reason: "ineligible-target" }; }
+  if (!target || !target.eligible) { await d.log("skip", "target not eligible"); return { acted: false, reason: "ineligible-target" }; }
   const deltaBps = target.apyBps - (current?.apyBps ?? 0);
-  if (deltaBps < d.minYieldDeltaBps) { d.log("skip", `delta ${deltaBps}bps < ${d.minYieldDeltaBps}`); return { acted: false, reason: "below-delta" }; }
-  if (best && target.poolId !== best.poolId) { d.log("skip", "target not the best eligible"); return { acted: false, reason: "not-best" }; }
+  if (deltaBps < d.minYieldDeltaBps) { await d.log("skip", `delta ${deltaBps}bps < ${d.minYieldDeltaBps}`); return { acted: false, reason: "below-delta" }; }
+  if (best && target.poolId !== best.poolId) { await d.log("skip", "target not the best eligible"); return { acted: false, reason: "not-best" }; }
 
   let amount = decision.amountUsdc ?? pos.amountUsdc;
   if (amount > d.perTxCapStroops) amount = d.perTxCapStroops;
   const dayAgo = d.now - 86400;
-  if (d.rebalancedSince(dayAgo) + amount > d.dailyCapStroops) { d.log("skip", "daily cap reached"); return { acted: false, reason: "daily-cap" }; }
+  if ((await d.rebalancedSince(dayAgo)) + amount > d.dailyCapStroops) { await d.log("skip", "daily cap reached"); return { acted: false, reason: "daily-cap" }; }
   // idle (poolId === null) -> deposit-only; allocated -> rebalance (withdraw+deposit)
   const res = pos.poolId
     ? await d.rebalance(pos.poolId, target.poolId, amount)
     : await d.deposit(target.poolId, amount);
-  if (!res.success) { d.log("error", `execution failed: ${res.error}`, res); return { acted: false, reason: "tx-failed" }; }
+  if (!res.success) { await d.log("error", `execution failed: ${res.error}`, res); return { acted: false, reason: "tx-failed" }; }
 
-  d.recordRebalance(amount);
-  d.commitPosition({ poolId: target.poolId, amountUsdc: amount });
+  await d.recordRebalance(amount);
+  await d.commitPosition({ poolId: target.poolId, amountUsdc: amount });
   const verb = pos.poolId ? `moved ${pos.poolId}->${target.poolId}` : `deposited idle -> ${target.poolId}`;
-  d.log("rebalance", `${verb} ${amount} stroops (+${deltaBps}bps): ${decision.rationale}`, { hashes: res.hashes });
+  await d.log("rebalance", `${verb} ${amount} stroops (+${deltaBps}bps): ${decision.rationale}`, { hashes: res.hashes });
   return { acted: true, reason: pos.poolId ? "rebalanced" : "deposited" };
 }
 
@@ -74,12 +74,12 @@ export interface PerUserDeps {
    */
   supplyForUser: (user: UserRegistration, amount: bigint) => Promise<TxResult>;
   /** This user's current per-user position (idle => poolId null). */
-  getUserPosition: (smartWallet: string) => Position;
+  getUserPosition: (smartWallet: string) => Promise<Position>;
   /** Persist this user's new position after a successful supply. */
-  setUserPosition: (smartWallet: string, p: Position) => void;
+  setUserPosition: (smartWallet: string, p: Position) => Promise<void>;
   /** How much idle USDC the user has available to supply (stroops). */
   idleUsdcForUser: (user: UserRegistration) => Promise<bigint>;
-  log: (kind: string, msg: string, meta?: unknown) => void;
+  log: (kind: string, msg: string, meta?: unknown) => Promise<void>;
   /** Per-tx cap (stroops) — also bounded on-chain by the user's spending rule. */
   perTxCapStroops: bigint;
 }
@@ -109,7 +109,7 @@ export async function runPerUserExecution(
 ): Promise<PerUserResult> {
   const out: PerUserResult = { attempted: 0, supplied: 0, hashes: [] };
   if (!d.users.length) {
-    d.log("peruser", "no registered users — scan/decide only (no-op execution)");
+    await d.log("peruser", "no registered users — scan/decide only (no-op execution)");
     return out;
   }
 
@@ -117,7 +117,7 @@ export async function runPerUserExecution(
     try {
       const idle = await d.idleUsdcForUser(user);
       if (idle <= 0n) {
-        d.log("peruser", `skip ${user.owner.slice(0, 8)}… — no idle USDC`, {
+        await d.log("peruser", `skip ${user.owner.slice(0, 8)}… — no idle USDC`, {
           smartWallet: user.smartWallet,
         });
         continue;
@@ -126,24 +126,24 @@ export async function runPerUserExecution(
       out.attempted++;
       const res = await d.supplyForUser(user, amount);
       if (!res.success) {
-        d.log("error", `per-user supply failed for ${user.owner.slice(0, 8)}…: ${res.error}`, {
+        await d.log("error", `per-user supply failed for ${user.owner.slice(0, 8)}…: ${res.error}`, {
           smartWallet: user.smartWallet,
           hashes: res.hashes,
         });
         continue;
       }
-      const prev = d.getUserPosition(user.smartWallet);
+      const prev = await d.getUserPosition(user.smartWallet);
       const newAmount = (prev.poolId === d.execPoolId ? prev.amountUsdc : 0n) + amount;
-      d.setUserPosition(user.smartWallet, { poolId: d.execPoolId, amountUsdc: newAmount });
+      await d.setUserPosition(user.smartWallet, { poolId: d.execPoolId, amountUsdc: newAmount });
       out.supplied++;
       out.hashes.push(...res.hashes);
-      d.log(
+      await d.log(
         "peruser",
         `supplied ${amount} stroops idle USDC -> ${d.execPoolId} for ${user.owner.slice(0, 8)}… (chosen mainnet pool ${chosenPoolId ?? "n/a"})`,
         { smartWallet: user.smartWallet, hashes: res.hashes, amount: amount.toString() },
       );
     } catch (e) {
-      d.log("error", `per-user execution error for ${user.owner.slice(0, 8)}…: ${(e as Error).message}`, {
+      await d.log("error", `per-user execution error for ${user.owner.slice(0, 8)}…: ${(e as Error).message}`, {
         smartWallet: user.smartWallet,
       });
     }

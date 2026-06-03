@@ -1,6 +1,8 @@
 // Pure formatting helpers shared across the Living Network UI. USDC amounts are
 // 7-decimal stroops stored as decimal strings (BigInt-safe).
 
+import type { ActivityEntry } from "./types";
+
 const STROOPS_PER_USDC = 10_000_000n;
 
 /** Parse a stroop decimal string into a whole-USDC number (floored). */
@@ -50,6 +52,64 @@ export function poolPillLabel(name: string, poolId: string): string {
   const core = looksLikeId || !name ? truncateAddress(poolId, 4, 5) : name;
   const cleaned = core.replace(/^blend\s*[·:-]?\s*/i, "").trim();
   return `BLEND · ${cleaned.toUpperCase()}`;
+}
+
+/** A single on-chain transaction the agent submitted, flattened from a log row. */
+export interface AgentTx {
+  ts: number; // epoch seconds (activity log granularity)
+  kind: string; // "peruser" | "rebalance" | …
+  message: string;
+  hash: string;
+  /** Supplied amount in stroops (decimal string), when the log row carried it. */
+  amountStroops?: string;
+  /** The user's smart account the supply moved from, when present. */
+  smartWallet?: string;
+}
+
+/**
+ * Pull the agent's REAL transactions out of the activity log. Money-moving log
+ * rows (`peruser` supplies, legacy `rebalance`) carry `meta.hashes` (testnet tx
+ * hashes of supplies into our Blend pool) plus optional `amount` / `smartWallet`.
+ * Each hash becomes one {@link AgentTx}; rows without hashes are ignored. Order
+ * is preserved (the activity log is already newest-first).
+ */
+export function extractAgentTxs(activity: ActivityEntry[], limit = 20): AgentTx[] {
+  const out: AgentTx[] = [];
+  for (const e of activity) {
+    if (!e.meta) continue;
+    let m: { hashes?: string[]; amount?: string; smartWallet?: string };
+    try {
+      m = JSON.parse(e.meta);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(m.hashes)) continue;
+    for (const hash of m.hashes) {
+      if (!hash) continue;
+      out.push({
+        ts: e.ts,
+        kind: e.kind,
+        message: e.message,
+        hash,
+        amountStroops: m.amount,
+        smartWallet: m.smartWallet,
+      });
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
+}
+
+/** Compact relative time from an epoch-SECONDS timestamp, e.g. "2m ago". */
+export function formatTimeAgo(tsSec: number, nowMs = Date.now()): string {
+  const secs = Math.max(0, Math.floor(nowMs / 1000 - tsSec));
+  if (secs < 10) return "just now";
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 /** Map a Stellar getNetwork() value to a friendly chrome label. */

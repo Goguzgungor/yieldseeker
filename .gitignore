@@ -8,3 +8,8 @@ dist
 next-env.d.ts
 *.tsbuildinfo
 scripts/spike-artifacts/
+.vercel
+.playwright-mcp/
+ys-*.png
+yieldseeker-final.png
+scripts/blend-utils

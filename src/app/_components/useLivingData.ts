@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ActivityEntry, ApiPosition, ApiScanResponse, ApiScoredPool, SsePayload } from "./types";
+import type { ActivityEntry, ApiPosition, ApiScanResponse, ApiScoredPool } from "./types";
 
 export interface LivingData {
   pools: ApiScoredPool[];
@@ -11,7 +11,7 @@ export interface LivingData {
   activity: ActivityEntry[];
   loading: boolean;
   scanning: boolean; // true briefly after a manual rescan / when fresh log activity arrives
-  connected: boolean; // SSE stream open
+  connected: boolean; // true once polling has succeeded at least once
   rescan: () => void;
 }
 
@@ -24,6 +24,12 @@ async function getJson<T>(url: string): Promise<T | null> {
     return null;
   }
 }
+
+// Poll cadences. Position+decision+activity are cheap reads; the scan array is
+// pulled less often. (On Vercel, SSE can't be held open across the function
+// timeout, so the live feed is plain polling — robust and serverless-friendly.)
+const LIVE_POLL_MS = 3_000;
+const SCAN_POLL_MS = 15_000;
 
 export function useLivingData(): LivingData {
   const [pools, setPools] = useState<ApiScoredPool[]>([]);
@@ -51,7 +57,13 @@ export function useLivingData(): LivingData {
     if (data) setPosition(data);
   }, []);
 
-  // Initial load.
+  const flashScanning = useCallback(() => {
+    setScanning(true);
+    if (scanTimer.current) clearTimeout(scanTimer.current);
+    scanTimer.current = setTimeout(() => setScanning(false), 2200);
+  }, []);
+
+  // Initial load: scan + position + activity in parallel.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -77,63 +89,48 @@ export function useLivingData(): LivingData {
     };
   }, []);
 
-  // SSE: live position + decision + activity. Re-fetch the scan when a "scan"
-  // log line appears (fresh pool data is available).
+  // Live feed via polling: pull position (already merged with the latest agent
+  // decision) + the activity log every few seconds. When a fresh "scan" /
+  // "rebalance" log line appears, re-pull the scan array and flash the animation.
   useEffect(() => {
-    if (typeof window === "undefined" || typeof EventSource === "undefined") return;
-    const es = new EventSource("/api/events");
-    es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
-    es.onmessage = (ev) => {
-      try {
-        const payload = JSON.parse(ev.data) as SsePayload;
-        // Merge SSE position (poolId+amount) with the decision so the chosen pool
-        // + rationale stay in sync without a separate poll.
-        setPosition((prev) => ({
-          poolId: payload.position.poolId,
-          amountUsdc: payload.position.amountUsdc,
-          chosenPoolId: payload.decision?.chosenPoolId ?? prev?.chosenPoolId ?? null,
-          rationale: payload.decision?.rationale ?? prev?.rationale ?? "",
-          action: payload.decision?.action ?? prev?.action ?? "hold",
-        }));
-        if (Array.isArray(payload.log) && payload.log.length) {
-          setActivity((prev) => {
-            const seen = new Set(prev.map((e) => `${e.ts}:${e.message}`));
-            const fresh = payload.log.filter((e) => !seen.has(`${e.ts}:${e.message}`));
-            if (!fresh.length) return prev;
-            return [...fresh, ...prev].slice(0, 60);
-          });
-          const newest = payload.log[0];
-          if (newest && newest.ts > lastLogTs.current) {
-            lastLogTs.current = newest.ts;
-            if (newest.kind === "scan" || newest.kind === "rebalance") {
-              void refetchScan();
-              flashScanning();
-            }
+    let cancelled = false;
+    const poll = async () => {
+      const [pos, act] = await Promise.all([
+        getJson<ApiPosition>("/api/position"),
+        getJson<ActivityEntry[]>("/api/activity"),
+      ]);
+      if (cancelled) return;
+      if (pos || Array.isArray(act)) setConnected(true);
+      if (pos) setPosition(pos);
+      if (Array.isArray(act)) {
+        setActivity(act);
+        const newest = act[0];
+        if (newest && newest.ts > lastLogTs.current) {
+          lastLogTs.current = newest.ts;
+          if (newest.kind === "scan" || newest.kind === "rebalance") {
+            void refetchScan();
+            flashScanning();
           }
         }
-      } catch {
-        /* ignore malformed frames */
       }
     };
-    return () => es.close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refetchScan]);
+    void poll();
+    const id = setInterval(poll, LIVE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [refetchScan, flashScanning]);
 
-  // Periodic scan refresh as a safety net (SSE doesn't carry the pool array).
+  // Periodic scan refresh as a safety net (the live poll only carries the pool
+  // array when a fresh scan log lands).
   useEffect(() => {
-    const id = setInterval(() => void refetchScan(), 15_000);
+    const id = setInterval(() => void refetchScan(), SCAN_POLL_MS);
     return () => clearInterval(id);
   }, [refetchScan]);
 
-  const flashScanning = useCallback(() => {
-    setScanning(true);
-    if (scanTimer.current) clearTimeout(scanTimer.current);
-    scanTimer.current = setTimeout(() => setScanning(false), 2200);
-  }, []);
-
   // Manual "Start scan" — re-pulls scan + position and flashes the scanning
-  // animation. (The agent loop drives real scans; this surfaces the latest.)
+  // animation. (The agent tick drives real scans; this surfaces the latest.)
   const rescan = useCallback(() => {
     flashScanning();
     void refetchScan();

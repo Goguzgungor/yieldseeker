@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  * Returns `{ ok, removed }` (count of users that were registered).
  */
 export async function POST() {
-  const removed = resetRegistry();
+  const removed = await resetRegistry();
   return NextResponse.json({ ok: true, removed });
 }
 
@@ -22,10 +22,11 @@ export async function POST() {
  * route-written registration is visible to a separate request). Never mutates.
  */
 export async function GET() {
+  const users = await listUsers();
   return NextResponse.json({
     storeId: registryStoreId(),
     pid: process.pid,
-    users: listUsers().map((u) => ({ owner: u.owner, smartWallet: u.smartWallet })),
-    count: listUsers().length,
+    users: users.map((u) => ({ owner: u.owner, smartWallet: u.smartWallet })),
+    count: users.length,
   });
 }

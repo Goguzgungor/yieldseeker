@@ -58,7 +58,7 @@ export async function POST(req: Request) {
     }
     const success = g.status === "SUCCESS";
     if (parsed.data.label) {
-      rt.db.log("onboard", `${parsed.data.label}: ${sent.hash} → ${g.status}`, { hash: sent.hash, status: g.status });
+      await rt.db.log("onboard", `${parsed.data.label}: ${sent.hash} → ${g.status}`, { hash: sent.hash, status: g.status });
     }
     return NextResponse.json(
       { hash: sent.hash, success, status: g.status },

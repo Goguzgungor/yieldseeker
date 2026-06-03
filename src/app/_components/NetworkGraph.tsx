@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import type { ComponentType } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApiPosition, ApiScoredPool } from "./types";
-import { formatUsdc, poolPillLabel } from "./format";
+import { poolPillLabel, truncateAddress } from "./format";
 
 // Canvas/DOM-only lib — must never render on the server, so it's dynamically
 // imported with ssr:false. The library ships its own (strict) NodeObject/
@@ -63,6 +63,8 @@ interface Props {
   scanning: boolean;
   selectedId: string | null;
   onSelect: (poolId: string | null) => void;
+  /** Latest agent supply tx hash — drawn as a badge above the chosen pool. */
+  chosenTxHash?: string | null;
 }
 
 // Deterministic faint dot-cloud (Giza texture) generated once per canvas size.
@@ -120,15 +122,27 @@ export default function NetworkGraph({
   scanning,
   selectedId,
   onSelect,
+  chosenTxHash,
 }: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  const idleLabel = useMemo(() => {
-    const amt = formatUsdc(position?.amountUsdc);
-    return `${amt} USDC idle`;
-  }, [position?.amountUsdc]);
+  // TX pulse: record when a new supply TX lands so nodeCanvasObject can draw
+  // staggered ripple rings during the next ~1.2 s of animation frames.
+  const pulseRef = useRef<number>(0);
+  useEffect(() => {
+    if (!chosenTxHash) return;
+    pulseRef.current = Date.now();
+  }, [chosenTxHash]);
+
+  // Status caption under the agent node (no more "idle USDC" — we surface what
+  // the agent is actively doing instead).
+  const agentLabel = useMemo(() => {
+    if (!pools.length) return "scanning…";
+    const eligible = pools.filter((p) => p.eligible).length;
+    return `${pools.length} pool${pools.length === 1 ? "" : "s"} · ${eligible} eligible`;
+  }, [pools]);
 
   const chosenPoolId = position?.chosenPoolId ?? null;
 
@@ -169,17 +183,23 @@ export default function NetworkGraph({
       ? eligible.reduce((a, b) => (b.apyBps > a.apyBps ? b : a))
       : null;
 
-    // Highlight logic:
-    //   - If the agent has an active position (chosenPoolId set), highlight it.
-    //   - Otherwise (idle / hold), highlight the best-eligible pool so the user
-    //     always sees what the agent would pick next.
-    const highlightId = chosenPoolId ?? best?.poolId ?? null;
+    // Highlight logic (option 1 — "wow moment"):
+    //   Show the full blue chosen-treatment ONLY when the user's funds are
+    //   actually deployed (position.poolId is set + amountUsdc > 0). Before
+    //   any supply the graph is visually neutral so the glow is a reveal, not
+    //   a permanent fixture. The "best" eligible pool gets a subtle dotted
+    //   outline so the user can still identify it pre-deployment.
+    const activePoolId =
+      position?.poolId && Number(position.amountUsdc ?? "0") > 0
+        ? position.poolId
+        : null;
+    const highlightId = activePoolId;
 
     // Pin the agent at the canvas centre in graph-space (0, 0).
     const agent: GraphNode = {
       id: "__agent__",
       kind: "agent",
-      label: idleLabel,
+      label: agentLabel,
       fx: 0,
       fy: 0,
       x: 0,
@@ -216,7 +236,7 @@ export default function NetworkGraph({
       nodes: [...dust, agent, ...poolNodes],
       links: poolLinks,
     };
-  }, [pools, dust, idleLabel, chosenPoolId]);
+  }, [pools, dust, agentLabel, chosenPoolId]);
 
   // Tune forces whenever the graph mounts or node count changes.
   // Runs after ForceGraph2D has created the d3 simulation.
@@ -382,9 +402,11 @@ export default function NetworkGraph({
             }
 
             // Pool: black rounded pill with a mark, white mono text.
-            // Chosen/best = blue outline + glow + blue endpoint dot.
+            // chosen  = funds actively deployed here → full blue treatment.
+            // bestOnly = best eligible but no funds yet → subtle dotted outline.
             const pool = n.pool!;
             const isChosen = !!n.chosen;
+            const isBestOnly = !!n.best && !isChosen;
             const isDim = !pool.eligible;
             const selected = n.id === selectedId;
 
@@ -418,17 +440,77 @@ export default function NetworkGraph({
               ctx.lineWidth = 1;
               ctx.strokeStyle = BLUE;
               ctx.stroke();
+            } else if (isBestOnly) {
+              // Subtle dotted outline: "this is where your money would go"
+              // No glow, no particles — just a hint.
+              ctx.save();
+              ctx.setLineDash([2, 2.5]);
+              roundRect(ctx, rectX - 0.6, rectY - 0.6, w + 1.2, h + 1.2, 5);
+              ctx.lineWidth = 0.7;
+              ctx.strokeStyle = "rgba(43,76,255,0.42)";
+              ctx.stroke();
+              ctx.restore();
+            }
+
+            // Tx badge above the CHOSEN pool — surfaces the agent's latest supply
+            // tx hash so it's obvious the money actually moved INTO this pool.
+            if (isChosen && chosenTxHash) {
+              const bFont = 2.6;
+              ctx.font = `700 ${bFont}px var(--font-plex-mono, monospace)`;
+              const bText = "✓ TX " + truncateAddress(chosenTxHash, 4, 4);
+              const bw = ctx.measureText(bText).width + 6;
+              const bh = bFont + 3;
+              const bx = x - bw / 2;
+              const by = rectY - bh - 3;
+              ctx.save();
+              ctx.shadowColor = "rgba(43,76,255,0.5)";
+              ctx.shadowBlur = 8;
+              roundRect(ctx, bx, by, bw, bh, 2.5);
+              ctx.fillStyle = BLUE;
+              ctx.fill();
+              ctx.restore();
+              ctx.textAlign = "center";
+              ctx.textBaseline = "middle";
+              ctx.fillStyle = "#ffffff";
+              ctx.fillText(bText, x, by + bh / 2 + 0.2);
+            }
+
+            // TX pulse: 3 staggered ripple rings expanding outward when a new
+            // supply TX lands. The graph is already animating (particles active)
+            // so nodeCanvasObject is called every frame — no extra rAF needed.
+            if (isChosen) {
+              const pulseStart = pulseRef.current;
+              if (pulseStart > 0) {
+                const elapsed = Date.now() - pulseStart;
+                for (let ring = 0; ring < 3; ring++) {
+                  const ringElapsed = elapsed - ring * 230;
+                  if (ringElapsed <= 0 || ringElapsed >= 950) continue;
+                  const frac = ringElapsed / 950;
+                  const radius = 9 + frac * 26;
+                  const alpha = (1 - frac) * 0.52;
+                  ctx.save();
+                  ctx.beginPath();
+                  ctx.arc(x, y, radius, 0, 2 * Math.PI);
+                  ctx.strokeStyle = `rgba(43,76,255,${alpha.toFixed(2)})`;
+                  ctx.lineWidth = 2.2 * (1 - frac * 0.65);
+                  ctx.stroke();
+                  ctx.restore();
+                }
+              }
             }
 
             ctx.textAlign = "left";
             ctx.textBaseline = "middle";
             ctx.font = `600 ${fontPx}px var(--font-plex-mono, monospace)`;
-            // Mark glyph in accent (blue for chosen, soft white otherwise).
+            // Mark glyph: blue accent for chosen, slightly brighter for best-only
+            // (helps the user spot the target pool before deploying).
             ctx.fillStyle = isChosen
               ? "#9db0ff"
-              : isDim
-                ? "rgba(255,255,255,0.55)"
-                : "#ffffff";
+              : isBestOnly
+                ? "rgba(255,255,255,0.88)"
+                : isDim
+                  ? "rgba(255,255,255,0.55)"
+                  : "#ffffff";
             ctx.fillText(mark, rectX + padX, y + 0.2);
             const markW = ctx.measureText(mark).width;
             ctx.fillStyle = isDim ? "rgba(255,255,255,0.78)" : "#ffffff";
