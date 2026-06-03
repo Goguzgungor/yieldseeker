@@ -331,6 +331,11 @@ export function useOnboarding(ownerAddress: string | null): OnboardingState {
         }
         setStep("register", { status: "done", detail: "agent now managing your USDC" });
 
+        // Trigger an immediate agent tick so the blue glow + ripple animation
+        // fires right after onboarding — without this, the user would wait for
+        // the daily Vercel cron. Fire-and-forget: don't block the success view.
+        void fetch("/api/tick").catch(() => {});
+
         // Flip to the registered view.
         await fetchStatus(ownerAddress);
       } catch (e) {
