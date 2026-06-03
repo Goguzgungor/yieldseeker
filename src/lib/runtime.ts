@@ -315,7 +315,26 @@ async function tick(rt: Runtime, doExecute: boolean): Promise<void> {
         },
         chosenPoolId,
       );
-      if (result.supplied > 0) rt.lastRebalanceAt = now;
+      if (result.supplied > 0) {
+        rt.lastRebalanceAt = now;
+        // Mirror the per-user supply into the legacy singleton position so the
+        // graph's `activePoolId` check (position.poolId + amountUsdc > 0)
+        // triggers the blue glow + ripple animation. The LLM may have decided
+        // "hold" for the main wallet (no existing position), but the per-user
+        // execution is independent — once real USDC lands, the UI should show it.
+        const prev = await rt.db.getPosition();
+        if (!prev.poolId) {
+          await rt.db.setPosition({
+            poolId: rt.cfg.execPoolId,
+            amountUsdc: result.totalStroops,
+          });
+          // Persist for cross-invocation visibility (route handlers + polling).
+          await rt.db.setKV(
+            "lastScan",
+            JSON.stringify(serializeScoredPools(rt.lastScan)),
+          );
+        }
+      }
     }
   } catch (e) {
     await rt.db.log("error", `tick failed: ${(e as Error).message}`);

@@ -91,6 +91,8 @@ export interface PerUserResult {
   supplied: number;
   /** tx hashes of successful supplies. */
   hashes: string[];
+  /** Total stroops successfully supplied across all users. */
+  totalStroops: bigint;
 }
 
 /**
@@ -107,7 +109,7 @@ export async function runPerUserExecution(
   d: PerUserDeps,
   chosenPoolId: string | null,
 ): Promise<PerUserResult> {
-  const out: PerUserResult = { attempted: 0, supplied: 0, hashes: [] };
+  const out: PerUserResult = { attempted: 0, supplied: 0, hashes: [], totalStroops: 0n };
   if (!d.users.length) {
     await d.log("peruser", "no registered users — scan/decide only (no-op execution)");
     return out;
@@ -137,6 +139,7 @@ export async function runPerUserExecution(
       await d.setUserPosition(user.smartWallet, { poolId: d.execPoolId, amountUsdc: newAmount });
       out.supplied++;
       out.hashes.push(...res.hashes);
+      out.totalStroops += amount;
       await d.log(
         "peruser",
         `supplied ${amount} stroops idle USDC -> ${d.execPoolId} for ${user.owner.slice(0, 8)}… (chosen mainnet pool ${chosenPoolId ?? "n/a"})`,

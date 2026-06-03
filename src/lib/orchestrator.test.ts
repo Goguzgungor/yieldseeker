@@ -96,7 +96,7 @@ describe("runPerUserExecution (ARMA per-user)", () => {
   it("no-ops (no supply attempted) when there are no registered users", async () => {
     const d = perUserDeps({ users: [] });
     const r = await runPerUserExecution(d, "C_BEST");
-    expect(r).toEqual({ attempted: 0, supplied: 0, hashes: [] });
+    expect(r).toEqual({ attempted: 0, supplied: 0, hashes: [], totalStroops: 0n });
     expect(d.supplyForUser).not.toHaveBeenCalled();
   });
 
