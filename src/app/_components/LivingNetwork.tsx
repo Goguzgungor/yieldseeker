@@ -79,11 +79,31 @@ export default function LivingNetwork() {
   // Distinct protocols present in the latest scan → which rail dots light up.
   const activeProtocols = useMemo(() => new Set(pools.map((p) => p.protocol)), [pools]);
 
-  // The agent's real on-chain transactions (supplies into our Blend testnet
-  // pool), flattened from the activity log. The newest one is surfaced on the
-  // chosen pool node so it's obvious WHERE the money went.
+  // All agent transactions from the activity log.
   const agentTxs = useMemo(() => extractAgentTxs(activity), [activity]);
-  const latestTxHash = agentTxs[0]?.hash ?? null;
+
+  // Per-user TX filter: when a registered user is connected, show only THEIR
+  // supplies (matched by smart wallet address). Visitors without a registered
+  // wallet see the full list so the dashboard still feels alive.
+  const mySmartWallet = onboarding.registered ? onboarding.registered.smartWallet : null;
+  const myTxs = useMemo(
+    () =>
+      mySmartWallet
+        ? agentTxs.filter((tx) => tx.smartWallet === mySmartWallet)
+        : agentTxs,
+    [agentTxs, mySmartWallet],
+  );
+
+  // Ripple trigger: only fires for this user's latest TX, not someone else's.
+  const latestTxHash = myTxs[0]?.hash ?? null;
+
+  // Graph position: blue glow + ripple only appear once THIS user's USDC has
+  // been supplied (their TX exists in the log). Neutral graph before that.
+  const graphPosition = useMemo(
+    () => (mySmartWallet && myTxs.length > 0 ? position : null),
+    [mySmartWallet, myTxs, position],
+  );
+
   const latestLog = activity[0];
   const active = scanning && !paused;
 
@@ -156,7 +176,7 @@ export default function LivingNetwork() {
           ) : (
             <NetworkGraph
               pools={pools}
-              position={position}
+              position={graphPosition}
               scanning={active}
               selectedId={selectedId}
               onSelect={setSelectedId}
@@ -164,8 +184,8 @@ export default function LivingNetwork() {
             />
           )}
 
-          {/* agent transactions feed (right-docked) */}
-          <TransactionsPanel txs={agentTxs} />
+          {/* agent transactions feed (right-docked): filtered to this user */}
+          <TransactionsPanel txs={myTxs} />
 
           {/* activity ticker */}
           {latestLog && (
@@ -203,7 +223,7 @@ export default function LivingNetwork() {
         <div style={styles.bottom}>
           <Stat label="Pools" value={loading ? "—" : String(pools.length)} />
           <Stat label="Best APY" value={bestApy != null ? formatApy(bestApy) : "—"} />
-          <Stat label="Agent TXs" value={loading ? "—" : String(agentTxs.length)} />
+          <Stat label="Agent TXs" value={loading ? "—" : String(myTxs.length)} />
           {onboarding.registered ? (
             <button
               type="button"
