@@ -542,6 +542,9 @@ export async function unregisterUser(owner: string): Promise<boolean> {
   const removed = await registry.removeUser(owner);
   if (removed) {
     await rt.db.log("reset", `unregistered user ${owner.slice(0, 8)}… (demo reset)`, { owner });
+    // Clear the singleton position so the graph returns to neutral and the
+    // next demo run gets a fresh "wow moment" when supply lands.
+    await rt.db.setPosition({ poolId: null, amountUsdc: 0n });
   }
   return removed;
 }

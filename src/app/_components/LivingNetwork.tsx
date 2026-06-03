@@ -82,17 +82,17 @@ export default function LivingNetwork() {
   // All agent transactions from the activity log.
   const agentTxs = useMemo(() => extractAgentTxs(activity), [activity]);
 
-  // Per-user TX filter: when a registered user is connected, show only THEIR
-  // supplies (matched by smart wallet address). Visitors without a registered
-  // wallet see the full list so the dashboard still feels alive.
+  // Per-user TX filter:
+  //   • Registered user → only their own supplies (matched by smart wallet).
+  //   • Wallet connected but NOT registered (setup mode / post-reset) → empty
+  //     list so the panel feels clean before they onboard.
+  //   • No wallet connected (visitor) → full list so the dashboard feels alive.
   const mySmartWallet = onboarding.registered ? onboarding.registered.smartWallet : null;
-  const myTxs = useMemo(
-    () =>
-      mySmartWallet
-        ? agentTxs.filter((tx) => tx.smartWallet === mySmartWallet)
-        : agentTxs,
-    [agentTxs, mySmartWallet],
-  );
+  const myTxs = useMemo(() => {
+    if (mySmartWallet) return agentTxs.filter((tx) => tx.smartWallet === mySmartWallet);
+    if (wallet.address) return []; // connected but not yet registered → clean slate
+    return agentTxs; // visitor: show all agent activity
+  }, [agentTxs, mySmartWallet, wallet.address]);
 
   // Ripple trigger: only fires for this user's latest TX, not someone else's.
   const latestTxHash = myTxs[0]?.hash ?? null;
