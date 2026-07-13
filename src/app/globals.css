@@ -830,3 +830,579 @@ canvas:active {
   font-size: 11px;
   color: var(--blue-bright);
 }
+
+/* ── slide-over paper panels (analysis + onboarding) ── */
+.ys-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 14, 19, 0.18);
+  transition: opacity 240ms ease;
+  z-index: 30;
+}
+
+.ys-panel {
+  --panel-w: 380px;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: min(var(--panel-w), calc(100vw - 32px));
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: 0 24px 60px -28px rgba(11, 11, 12, 0.35);
+  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 31;
+  overflow: hidden;
+}
+
+.ys-panel--analysis {
+  --panel-w: 360px;
+}
+
+.ys-panel-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.ys-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.ys-kicker {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--mut);
+  font-weight: 500;
+}
+
+.ys-panel-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-top: 6px;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.ys-sub-id {
+  font-size: 11.5px;
+  color: var(--mut);
+  margin-top: 4px;
+}
+
+.ys-close {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  background: var(--paper-2);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--ink-2);
+  flex-shrink: 0;
+  transition: background 140ms ease;
+}
+
+.ys-close:hover {
+  background: var(--line);
+}
+
+.ys-badge {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 11px;
+  border-radius: var(--r-pill);
+  border: 1px solid;
+  letter-spacing: 0.04em;
+}
+
+.ys-badge.on {
+  background: var(--blue-soft);
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
+.ys-badge.off {
+  background: var(--paper-2);
+  color: var(--ink-2);
+  border-color: var(--line-2);
+}
+
+.ys-reason {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  background: var(--paper-2);
+  border-radius: 10px;
+  padding: 11px 13px;
+  line-height: 1.5;
+}
+
+/* hairline-divided 2×2 metric grid */
+.ys-metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.ys-metric-grid > .ys-metric {
+  padding: 10px 0 10px 14px;
+  border-bottom: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.ys-metric-grid > .ys-metric:nth-child(odd) {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.ys-metric-grid > .ys-metric:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.ys-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ys-metric-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--mut);
+  font-weight: 500;
+}
+
+.ys-metric-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.ys-metric-value.accent {
+  color: var(--blue);
+}
+
+/* risk bar */
+.ys-risk {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ys-risk-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.ys-risk-num {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ys-risk-track {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--paper-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+
+.ys-risk-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  transition: width 400ms ease;
+}
+
+.ys-risk-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--mut);
+  letter-spacing: 0.06em;
+}
+
+/* agent rationale — quiet quote block */
+.ys-rationale {
+  background: var(--blue-faint);
+  border-left: 2px solid var(--blue);
+  border-radius: 0 10px 10px 0;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ys-rationale-head {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.ys-rationale-text {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+/* panel CTAs */
+.ys-panel-links {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+.ys-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 13px 16px;
+  border-radius: var(--r-md);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  background: var(--blue);
+  color: #fff;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.ys-cta:hover:not(:disabled) {
+  background: #2341e6;
+}
+
+.ys-cta:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.ys-cta:disabled {
+  opacity: 0.45;
+}
+
+.ys-cta-2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 13px 16px;
+  border-radius: var(--r-md);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  background: var(--paper-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.ys-cta-2:hover {
+  border-color: var(--line-2);
+}
+
+.ys-inline-link {
+  color: var(--blue);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+/* ── onboarding specifics ── */
+.ys-status-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--blue-faint);
+  border: 1px solid var(--blue-soft);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ys-metric-link {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--blue);
+  text-decoration: none;
+  word-break: break-word;
+}
+
+.ys-metric-value.small {
+  font-size: 13px;
+}
+
+.ys-block {
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ys-position-amt {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.ys-position-pool {
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.ys-exec-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ys-exec-link {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--blue);
+  text-decoration: none;
+}
+
+/* step list */
+.ys-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ys-step {
+  display: flex;
+  gap: 13px;
+  padding: 10px 0;
+  align-items: flex-start;
+}
+
+.ys-step-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--mut);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.ys-step-dot.done {
+  background: var(--blue);
+  box-shadow: none;
+  color: #fff;
+}
+
+.ys-step-dot.active {
+  background: var(--blue-soft);
+  box-shadow: none;
+  color: var(--blue);
+}
+
+.ys-step-dot.error {
+  background: #fde8e8;
+  box-shadow: none;
+  color: var(--err);
+}
+
+.ys-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ys-step-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.ys-step-hint {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* faucet + amount */
+.ys-faucet-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  background: var(--blue-faint);
+  border: 1px solid var(--blue-soft);
+  border-radius: 10px;
+  padding: 11px 13px;
+  line-height: 1.5;
+}
+
+.ys-faucet-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--blue);
+  background: #fff;
+  border: 1px solid var(--blue-soft);
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+}
+
+.ys-amount {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ys-amount-row {
+  display: flex;
+  align-items: center;
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  gap: 8px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.ys-amount-row:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--blue-soft);
+}
+
+.ys-amount-input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  font-size: 18px;
+  font-weight: 700;
+  outline: none;
+  color: var(--ink);
+  min-width: 0;
+}
+
+.ys-amount-unit {
+  font-size: 12px;
+  color: var(--mut);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.ys-cap-hint {
+  font-size: 10.5px;
+  color: var(--mut);
+  line-height: 1.5;
+}
+
+.ys-balance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+}
+
+.ys-balance-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--blue);
+}
+
+.ys-error {
+  font-size: 12px;
+  color: var(--err);
+  background: #fdeaea;
+  border: 1px solid #f3c6c6;
+  border-radius: 10px;
+  padding: 10px 12px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.ys-reset {
+  background: transparent;
+  color: var(--mut);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 11px 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+
+.ys-reset:hover:not(:disabled) {
+  color: var(--ink-2);
+  border-color: var(--line-2);
+}
+
+.ys-reset:disabled {
+  opacity: 0.45;
+}
+
+.ys-reset-hint {
+  font-size: 10.5px;
+  color: var(--mut);
+  line-height: 1.5;
+  margin-top: -6px;
+}
+
+/* collapsible fineprint */
+.ys-fineprint {
+  margin-top: auto;
+  font-size: 10.5px;
+}
+
+.ys-fineprint summary {
+  cursor: pointer;
+  color: var(--mut);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  list-style-position: inside;
+}
+
+.ys-fineprint summary:hover {
+  color: var(--ink-2);
+}
+
+.ys-fineprint p {
+  color: var(--mut);
+  line-height: 1.6;
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.ys-code {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  background: var(--paper-2);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--ink);
+}
