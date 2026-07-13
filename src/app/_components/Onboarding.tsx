@@ -60,38 +60,40 @@ export default function Onboarding({ ownerAddress, onboarding, open, onClose }: 
     <>
       <div
         onClick={onClose}
-        style={{ ...styles.scrim, opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none" }}
+        className="ys-scrim"
+        style={{ opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none" }}
       />
       <aside
         aria-hidden={!open}
-        style={{ ...styles.panel, transform: open ? "translateX(0)" : "translateX(105%)" }}
+        className="ys-panel"
+        style={{ transform: open ? "translateX(0)" : "translateX(105%)" }}
       >
         {open && (
-          <div style={styles.inner}>
-            <div style={styles.header}>
+          <div className="ys-panel-inner">
+            <div className="ys-panel-head">
               <div>
-                <div style={styles.kicker}>{registered ? "YOUR ACCOUNT" : "GET STARTED"}</div>
-                <h2 style={styles.title}>
+                <div className="ys-kicker">{registered ? "YOUR ACCOUNT" : "GET STARTED"}</div>
+                <h2 className="ys-panel-title">
                   {registered ? "Agent active" : "Onboard to YieldSeeker"}
                 </h2>
-                <div style={styles.subId}>
+                <div className="ys-sub-id">
                   {ownerAddress ? truncateAddress(ownerAddress, 6, 6) : "connect a wallet"}
                 </div>
               </div>
-              <button onClick={onClose} aria-label="Close panel" style={styles.close}>
+              <button onClick={onClose} aria-label="Close panel" className="ys-close">
                 ✕
               </button>
             </div>
 
             {!ownerAddress && (
-              <div style={styles.reason}>
+              <div className="ys-reason ys-prose">
                 Connect your Freighter wallet to create a smart account and let the agent manage
                 your idle USDC.
               </div>
             )}
 
             {ownerAddress && loadingStatus && registered === null && (
-              <div style={styles.reason}>Checking your account…</div>
+              <div className="ys-reason ys-prose">Checking your account…</div>
             )}
 
             {ownerAddress && registered && (
@@ -100,96 +102,92 @@ export default function Onboarding({ ownerAddress, onboarding, open, onClose }: 
 
             {ownerAddress && registered === false && (
               <>
-                <div
-                  style={{
-                    ...styles.badge,
-                    background: "var(--blue-soft)",
-                    color: "var(--blue)",
-                    borderColor: "var(--blue)",
-                  }}
-                >
-                  ○ NOT YET ONBOARDED
-                </div>
+                <div className="ys-badge on">○ NOT YET ONBOARDED</div>
 
-                <div style={styles.stepList}>
+                <div className="ys-steps">
                   {steps.map((s, i) => (
                     <StepRow key={s.key} step={s} index={i + 1} />
                   ))}
                 </div>
 
-                <div style={styles.faucetNote}>
-                  <span style={styles.faucetBadge}>SELF-SERVE</span>
+                <div className="ys-faucet-note ys-prose">
+                  <span className="ys-faucet-badge">SELF-SERVE</span>
                   We&rsquo;ll mint test USDC straight to your smart account — no external USDC
                   needed.
                 </div>
 
-                <div style={styles.amountBlock}>
-                  <label style={styles.metricLabel} htmlFor="ys-fund-amount">
+                <div className="ys-amount">
+                  <label className="ys-metric-label" htmlFor="ys-fund-amount">
                     TEST USDC TO MINT
                   </label>
-                  <div style={styles.amountRow}>
+                  <div className="ys-amount-row">
                     <input
                       id="ys-fund-amount"
-                      style={styles.amountInput}
+                      className="ys-amount-input"
                       value={amount}
                       inputMode="decimal"
                       disabled={running}
                       onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
                       spellCheck={false}
                     />
-                    <span style={styles.amountUnit}>USDC</span>
+                    <span className="ys-amount-unit">USDC</span>
                   </div>
-                  <div style={styles.capHint}>
+                  <div className="ys-cap-hint ys-prose">
                     Faucet mints up to 5,000 USDC / request. Agent spending is then on-chain capped
                     at 5,000 USDC / day.
                   </div>
                 </div>
 
                 {saUsdcStroops !== null && (
-                  <div style={styles.balanceReadout}>
-                    <span style={styles.metricLabel}>SMART ACCOUNT USDC</span>
-                    <span style={styles.balanceValue}>{formatUsdc(saUsdcStroops)} USDC</span>
+                  <div className="ys-balance">
+                    <span className="ys-metric-label">SMART ACCOUNT USDC</span>
+                    <span className="ys-balance-value">{formatUsdc(saUsdcStroops)} USDC</span>
                   </div>
                 )}
 
-                {error && <div style={styles.errorBox}>{error}</div>}
+                {error && <div className="ys-error ys-prose">{error}</div>}
 
                 <button
-                  style={{ ...styles.cta, ...(running || !amountValid ? styles.ctaDisabled : {}) }}
+                  className="ys-cta"
+                  style={{ justifyContent: "center" }}
                   disabled={running || !amountValid}
                   onClick={() => void start(amountNum)}
                 >
                   {running ? "Setting up…" : "Get test USDC & activate"}
                 </button>
 
-                <div style={styles.fineprint}>
-                  Step 3 mints our own testnet USDC into your smart account (we control the USDC
-                  issuer on testnet), so you never need to source USDC. Step 2 is signed by a backend
-                  demo owner: Freighter&rsquo;s <code style={styles.code}>signAuthEntry</code> only
-                  signs the standard Soroban auth preimage, not the OpenZeppelin SmartAccount&rsquo;s
-                  custom AuthPayload digest (which appends the context-rule ids). Steps 1 and 4 are
-                  signed natively in your Freighter wallet.
-                  {smartWallet && (
-                    <>
-                      {" "}
-                      Smart account:{" "}
-                      <a
-                        href={testnetContractUrl(smartWallet)}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={styles.inlineLink}
-                      >
-                        {truncateAddress(smartWallet, 4, 4)} ↗
-                      </a>
-                    </>
-                  )}
-                  {agent && (
-                    <>
-                      {" "}
-                      Agent signer: <code style={styles.code}>{truncateAddress(agent.agentPublicKey, 4, 4)}</code>.
-                    </>
-                  )}
-                </div>
+                <details className="ys-fineprint">
+                  <summary>How signing works</summary>
+                  <p className="ys-prose">
+                    Step 3 mints our own testnet USDC into your smart account (we control the USDC
+                    issuer on testnet), so you never need to source USDC. Step 2 is signed by a
+                    backend demo owner: Freighter&rsquo;s <code className="ys-code">signAuthEntry</code>{" "}
+                    only signs the standard Soroban auth preimage, not the OpenZeppelin
+                    SmartAccount&rsquo;s custom AuthPayload digest (which appends the context-rule
+                    ids). Steps 1 and 4 are signed natively in your Freighter wallet.
+                    {smartWallet && (
+                      <>
+                        {" "}
+                        Smart account:{" "}
+                        <a
+                          href={testnetContractUrl(smartWallet)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ys-inline-link"
+                        >
+                          {truncateAddress(smartWallet, 4, 4)} ↗
+                        </a>
+                      </>
+                    )}
+                    {agent && (
+                      <>
+                        {" "}
+                        Agent signer:{" "}
+                        <code className="ys-code">{truncateAddress(agent.agentPublicKey, 4, 4)}</code>.
+                      </>
+                    )}
+                  </p>
+                </details>
               </>
             )}
           </div>
@@ -212,87 +210,79 @@ function RegisteredView({
 }) {
   const supplied = user.position.poolId ? formatUsdc(user.position.amountUsdc) : "0";
 
-  // Pull the most recent supply tx hash from the activity log via meta (if any).
-  // The activity log entries for "peruser" and "rebalance" carry { hashes: string[] }.
-  // We surface the first hash as a "latest tx" link; the log is fetched on mount
-  // via the SSE / polling path and lives in useLivingData, but since RegisteredView
-  // only gets `user` we read it from a data attribute we don't have — instead we
-  // derive this from the position meta exposed by the server (future) or skip for now.
-  // Current approach: show a static link row for exec pool + USDC.
-
   return (
     <>
-      <div style={styles.statusBanner}>
+      <div className="ys-status-banner">
         <span className="ys-live-dot ys-live-on" />
         <span>Agent active — managing your USDC</span>
       </div>
 
-      <div style={styles.grid}>
+      <div className="ys-metric-grid">
         {/* Smart account: clickable testnet contract link */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={styles.metricLabel}>SMART ACCOUNT</span>
+        <div className="ys-metric">
+          <span className="ys-metric-label">SMART ACCOUNT</span>
           <a
             href={testnetContractUrl(user.smartWallet)}
             target="_blank"
             rel="noreferrer"
-            style={styles.metricLink}
+            className="ys-metric-link"
             title={user.smartWallet}
           >
             {truncateAddress(user.smartWallet, 5, 5)} ↗
           </a>
         </div>
         <Metric label="SUPPLIED" value={`${supplied} USDC`} accent />
-        <Metric label="POOL RULE" value={`#${user.poolRuleId}`} mono />
-        <Metric label="USDC RULE" value={`#${user.usdcRuleId} · capped`} mono />
+        <Metric label="POOL RULE" value={`#${user.poolRuleId}`} small />
+        <Metric label="USDC RULE" value={`#${user.usdcRuleId} · capped`} small />
       </div>
 
-      <div style={styles.positionBlock}>
-        <div style={styles.metricLabel}>CURRENT POSITION</div>
+      <div className="ys-block">
+        <div className="ys-metric-label">CURRENT POSITION</div>
         {user.position.poolId ? (
           <>
-            <div style={styles.positionAmt}>{supplied} USDC</div>
-            <div style={styles.positionPool}>
+            <div className="ys-position-amt">{supplied} USDC</div>
+            <div className="ys-position-pool ys-prose">
               in{" "}
               <a
                 href={stellarExpertUrl(user.position.poolId)}
                 target="_blank"
                 rel="noreferrer"
-                style={styles.inlineLink}
+                className="ys-inline-link"
               >
                 {truncateAddress(user.position.poolId, 5, 5)} ↗
-              </a>
-              {" "}(mainnet reference pool)
+              </a>{" "}
+              (mainnet reference pool)
             </div>
           </>
         ) : (
-          <div style={styles.positionPool}>
+          <div className="ys-position-pool ys-prose">
             Idle — the agent will supply your USDC into the best eligible pool on its next tick.
           </div>
         )}
       </div>
 
       {/* Exec contracts block — testnet contract links */}
-      <div style={styles.execBlock}>
-        <div style={styles.metricLabel}>TESTNET EXEC CONTRACTS</div>
-        <div style={styles.execRow}>
-          <span style={styles.execLabel}>EXEC POOL</span>
+      <div className="ys-block">
+        <div className="ys-metric-label">TESTNET EXEC CONTRACTS</div>
+        <div className="ys-exec-row">
+          <span className="ys-metric-label">EXEC POOL</span>
           <a
             href={testnetContractUrl(EXEC_POOL_ID)}
             target="_blank"
             rel="noreferrer"
-            style={styles.execLink}
+            className="ys-exec-link"
             title={EXEC_POOL_ID}
           >
             {truncateAddress(EXEC_POOL_ID, 4, 4)} ↗
           </a>
         </div>
-        <div style={styles.execRow}>
-          <span style={styles.execLabel}>USDC</span>
+        <div className="ys-exec-row">
+          <span className="ys-metric-label">USDC</span>
           <a
             href={testnetContractUrl(EXEC_USDC_CONTRACT_ID)}
             target="_blank"
             rel="noreferrer"
-            style={styles.execLink}
+            className="ys-exec-link"
             title={EXEC_USDC_CONTRACT_ID}
           >
             {truncateAddress(EXEC_USDC_CONTRACT_ID, 4, 4)} ↗
@@ -304,7 +294,8 @@ function RegisteredView({
         href={testnetContractUrl(user.smartWallet)}
         target="_blank"
         rel="noreferrer"
-        style={{ ...styles.cta, textDecoration: "none", display: "grid", placeItems: "center" }}
+        className="ys-cta"
+        style={{ justifyContent: "center" }}
       >
         View smart account ↗
       </a>
@@ -313,12 +304,12 @@ function RegisteredView({
         type="button"
         onClick={() => void onResetDemo()}
         disabled={resetting}
-        style={{ ...styles.resetBtn, ...(resetting ? styles.ctaDisabled : {}) }}
+        className="ys-reset"
         title="Forget this account in the demo registry and re-show onboarding"
       >
         {resetting ? "Resetting…" : "Reset demo"}
       </button>
-      <div style={styles.resetHint}>
+      <div className="ys-reset-hint ys-prose">
         Resets the in-memory demo registry for this wallet — your on-chain smart account is
         untouched; the onboarding re-appears so you can run the flow again.
       </div>
@@ -329,25 +320,25 @@ function RegisteredView({
 function StepRow({ step, index }: { step: OnboardingStep; index: number }) {
   const mark =
     step.status === "done" ? "✓" : step.status === "error" ? "✕" : step.status === "active" ? "" : index;
+  const dotClass =
+    step.status === "done"
+      ? "ys-step-dot done"
+      : step.status === "active"
+        ? "ys-step-dot active"
+        : step.status === "error"
+          ? "ys-step-dot error"
+          : "ys-step-dot";
   return (
-    <div style={styles.stepRow}>
-      <div
-        style={{
-          ...styles.stepDot,
-          ...(step.status === "done" ? styles.stepDotDone : {}),
-          ...(step.status === "active" ? styles.stepDotActive : {}),
-          ...(step.status === "error" ? styles.stepDotError : {}),
-        }}
-        className={step.status === "active" ? "ys-step-spin" : undefined}
-      >
+    <div className="ys-step">
+      <div className={dotClass}>
         {step.status === "active" ? <span className="ys-step-ring" /> : mark}
       </div>
-      <div style={styles.stepBody}>
-        <div style={styles.stepTitle}>{STEP_TITLES[step.key]}</div>
-        <div style={styles.stepHint}>
+      <div className="ys-step-body">
+        <div className="ys-step-title">{STEP_TITLES[step.key]}</div>
+        <div className="ys-step-hint ys-prose">
           {step.detail ? (
             step.txHash ? (
-              <a href={testnetTxUrl(step.txHash)} target="_blank" rel="noreferrer" style={styles.inlineLink}>
+              <a href={testnetTxUrl(step.txHash)} target="_blank" rel="noreferrer" className="ys-inline-link">
                 {step.detail.length > 42 ? truncateAddress(step.detail, 8, 8) : step.detail} ↗
               </a>
             ) : (
@@ -366,280 +357,27 @@ function Metric({
   label,
   value,
   accent,
-  mono,
+  small,
 }: {
   label: string;
   value: string;
   accent?: boolean;
-  mono?: boolean;
+  small?: boolean;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={styles.metricLabel}>{label}</span>
+    <div className="ys-metric">
+      <span className="ys-metric-label">{label}</span>
       <span
-        style={{
-          ...styles.metricValue,
-          color: accent ? "var(--blue)" : "var(--ink)",
-          fontSize: mono ? 13 : 18,
-        }}
+        className={[
+          "ys-metric-value",
+          accent ? "accent" : "",
+          small ? "small" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
       >
         {value}
       </span>
     </div>
   );
 }
-
-// ── styles ───────────────────────────────────────────────────────────────────
-
-type S = React.CSSProperties;
-
-const styles: Record<string, S> = {
-  scrim: {
-    position: "absolute",
-    inset: 0,
-    background: "rgba(11,11,12,0.04)",
-    transition: "opacity 240ms ease",
-    zIndex: 30,
-  },
-  panel: {
-    position: "absolute",
-    top: 12,
-    right: 12,
-    bottom: 12,
-    width: 380,
-    maxWidth: "calc(100% - 24px)",
-    background: "#ffffff",
-    border: "1px solid var(--line)",
-    borderRadius: 16,
-    boxShadow: "0 24px 60px -28px rgba(11,11,12,0.35)",
-    transition: "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)",
-    zIndex: 31,
-    overflow: "hidden",
-  },
-  inner: { display: "flex", flexDirection: "column", gap: 16, padding: 22, height: "100%", overflowY: "auto" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
-  kicker: { fontSize: 9.5, letterSpacing: "0.18em", color: "var(--mut)", fontWeight: 500 },
-  title: { fontSize: 18, fontWeight: 700, marginTop: 6, lineHeight: 1.2 },
-  subId: { fontSize: 11, color: "var(--mut)", marginTop: 4 },
-  close: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    background: "var(--chip)",
-    display: "grid",
-    placeItems: "center",
-    fontSize: 12,
-    color: "#777",
-    flexShrink: 0,
-  },
-  badge: {
-    alignSelf: "flex-start",
-    fontSize: 11,
-    fontWeight: 600,
-    padding: "6px 11px",
-    borderRadius: 999,
-    border: "1px solid",
-    letterSpacing: "0.04em",
-  },
-  reason: {
-    fontSize: 12.5,
-    color: "#5a5a60",
-    background: "#f6f6f2",
-    borderRadius: 10,
-    padding: "11px 13px",
-    lineHeight: 1.5,
-  },
-  statusBanner: {
-    display: "flex",
-    alignItems: "center",
-    gap: 9,
-    background: "var(--blue-faint)",
-    border: "1px solid var(--blue-soft)",
-    borderRadius: 12,
-    padding: "12px 14px",
-    fontSize: 13,
-    fontWeight: 600,
-    color: "var(--ink)",
-  },
-  grid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, padding: "2px 0" },
-  metricLabel: {
-    fontSize: 9.5,
-    letterSpacing: "0.12em",
-    textTransform: "uppercase",
-    color: "var(--mut)",
-    fontWeight: 500,
-  },
-  metricValue: { fontSize: 18, fontWeight: 700, wordBreak: "break-word" },
-  metricLink: {
-    fontSize: 13,
-    fontWeight: 700,
-    color: "#2b4cff",
-    textDecoration: "none",
-    fontFamily: "var(--font-plex-mono), ui-monospace, monospace",
-    letterSpacing: "-0.01em",
-    wordBreak: "break-word" as const,
-  },
-  execBlock: {
-    background: "var(--chip)",
-    borderRadius: 12,
-    padding: "12px 14px",
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 8,
-  },
-  execRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  execLabel: {
-    fontSize: 9.5,
-    letterSpacing: "0.12em",
-    textTransform: "uppercase" as const,
-    color: "var(--mut)",
-    fontWeight: 500,
-  },
-  execLink: {
-    fontSize: 12,
-    fontWeight: 600,
-    color: "#2b4cff",
-    textDecoration: "none",
-    fontFamily: "var(--font-plex-mono), ui-monospace, monospace",
-    letterSpacing: "-0.01em",
-  },
-  positionBlock: {
-    background: "var(--chip)",
-    borderRadius: 12,
-    padding: 14,
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
-  positionAmt: { fontSize: 22, fontWeight: 700 },
-  positionPool: { fontSize: 12, color: "#5a5a60", lineHeight: 1.5 },
-  // step list
-  stepList: { display: "flex", flexDirection: "column", gap: 2 },
-  stepRow: { display: "flex", gap: 13, padding: "10px 0", alignItems: "flex-start" },
-  stepDot: {
-    width: 26,
-    height: 26,
-    borderRadius: "50%",
-    background: "var(--chip)",
-    color: "var(--mut)",
-    display: "grid",
-    placeItems: "center",
-    fontSize: 12,
-    fontWeight: 700,
-    flexShrink: 0,
-    position: "relative",
-  },
-  stepDotDone: { background: "var(--blue)", color: "#fff" },
-  stepDotActive: { background: "var(--blue-soft)", color: "var(--blue)" },
-  stepDotError: { background: "#fde8e8", color: "#d23f3f" },
-  stepBody: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0 },
-  stepTitle: { fontSize: 13.5, fontWeight: 600 },
-  stepHint: { fontSize: 11.5, color: "#7a7a80", lineHeight: 1.5, wordBreak: "break-word" },
-  // amount
-  amountBlock: { display: "flex", flexDirection: "column", gap: 7 },
-  amountRow: {
-    display: "flex",
-    alignItems: "center",
-    background: "var(--chip)",
-    borderRadius: 12,
-    padding: "10px 14px",
-    gap: 8,
-  },
-  amountInput: {
-    flex: 1,
-    border: 0,
-    background: "transparent",
-    fontSize: 18,
-    fontWeight: 700,
-    outline: "none",
-    color: "var(--ink)",
-    minWidth: 0,
-  },
-  amountUnit: { fontSize: 12, color: "var(--mut)", fontWeight: 600, letterSpacing: "0.08em" },
-  capHint: { fontSize: 10.5, color: "var(--mut)", lineHeight: 1.5 },
-  // self-serve faucet
-  faucetNote: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: 8,
-    fontSize: 12.5,
-    color: "#5a5a60",
-    background: "var(--blue-faint)",
-    border: "1px solid var(--blue-soft)",
-    borderRadius: 10,
-    padding: "11px 13px",
-    lineHeight: 1.5,
-  },
-  faucetBadge: {
-    fontSize: 9,
-    fontWeight: 700,
-    letterSpacing: "0.12em",
-    color: "var(--blue)",
-    background: "#fff",
-    border: "1px solid var(--blue-soft)",
-    borderRadius: 999,
-    padding: "2px 8px",
-  },
-  balanceReadout: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    background: "var(--chip)",
-    borderRadius: 12,
-    padding: "12px 14px",
-  },
-  balanceValue: {
-    fontSize: 16,
-    fontWeight: 700,
-    color: "var(--blue)",
-    fontFamily: "var(--font-plex-mono), ui-monospace, monospace",
-  },
-  errorBox: {
-    fontSize: 12,
-    color: "#d23f3f",
-    background: "#fdeaea",
-    border: "1px solid #f3c6c6",
-    borderRadius: 10,
-    padding: "10px 12px",
-    lineHeight: 1.45,
-    wordBreak: "break-word",
-  },
-  cta: {
-    background: "var(--blue)",
-    color: "#fff",
-    borderRadius: 12,
-    padding: "14px 18px",
-    fontSize: 14,
-    fontWeight: 600,
-    transition: "transform 140ms ease, opacity 140ms ease",
-  },
-  ctaDisabled: { opacity: 0.45, cursor: "not-allowed" },
-  resetBtn: {
-    background: "transparent",
-    color: "var(--mut)",
-    border: "1px solid var(--line)",
-    borderRadius: 12,
-    padding: "11px 16px",
-    fontSize: 12.5,
-    fontWeight: 600,
-    letterSpacing: "0.02em",
-    transition: "color 140ms ease, border-color 140ms ease",
-  },
-  resetHint: { fontSize: 10, color: "var(--mut)", lineHeight: 1.5, marginTop: -6 },
-  fineprint: { fontSize: 10.5, color: "var(--mut)", lineHeight: 1.6, marginTop: "auto" },
-  code: {
-    fontFamily: "var(--font-plex-mono), ui-monospace, monospace",
-    background: "var(--chip)",
-    padding: "1px 4px",
-    borderRadius: 4,
-    fontSize: 10,
-    color: "var(--ink)",
-  },
-  inlineLink: { color: "var(--blue)", textDecoration: "none", fontWeight: 600 },
-};
