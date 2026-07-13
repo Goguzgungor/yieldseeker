@@ -671,3 +671,162 @@ canvas {
 canvas:active {
   cursor: grabbing;
 }
+
+/* ── transactions feed (dark glass, ON the screen) ── */
+.ys-tx {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 248px;
+  max-height: calc(100% - 24px);
+  display: flex;
+  flex-direction: column;
+  background: var(--screen-glass);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow:
+    inset 0 0 0 1px var(--screen-line),
+    0 12px 32px -16px rgba(0, 0, 0, 0.6);
+  border-radius: var(--r-md);
+  padding: 12px 12px 8px;
+  z-index: 9;
+}
+
+.ys-tx.collapsed {
+  padding-bottom: 12px;
+}
+
+.ys-tx-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ys-tx-kicker {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--screen-mut);
+  font-weight: 600;
+  flex: 1;
+}
+
+.ys-tx-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--blue-bright);
+  background: rgba(109, 134, 255, 0.14);
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.ys-tx-toggle {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: var(--screen-mut);
+  border-radius: 6px;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.ys-tx-toggle:hover {
+  color: var(--screen-ink);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ys-tx-toggle svg {
+  transition: transform 200ms ease;
+}
+
+.ys-tx.collapsed .ys-tx-toggle svg {
+  transform: rotate(-90deg);
+}
+
+.ys-tx-sub {
+  font-size: 10px;
+  color: var(--screen-mut);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+.ys-tx-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.ys-tx-empty {
+  font-size: 11px;
+  color: var(--screen-mut);
+  line-height: 1.5;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 11px 12px;
+}
+
+.ys-tx-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  text-decoration: none;
+  color: var(--screen-ink);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px var(--screen-line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  transition: box-shadow 140ms ease, transform 140ms ease;
+}
+
+.ys-tx-row:hover {
+  box-shadow: inset 0 0 0 1px var(--screen-line-2);
+  transform: translateY(-1px);
+}
+
+.ys-tx-row-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ys-tx-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ok-bright);
+  background: rgba(52, 209, 123, 0.12);
+  border-radius: 5px;
+  padding: 2px 6px;
+}
+
+.ys-tx-amount {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--screen-ink);
+}
+
+.ys-tx-ago {
+  font-size: 10px;
+  color: var(--screen-mut);
+  margin-left: auto;
+}
+
+.ys-tx-row-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ys-tx-hash {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--blue-bright);
+}
+
+.ys-tx-ext {
+  font-size: 11px;
+  color: var(--blue-bright);
+}
