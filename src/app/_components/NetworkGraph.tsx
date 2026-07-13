@@ -25,10 +25,27 @@ if (typeof window !== "undefined") {
   });
 }
 
-const INK = "#0b0b0c";
-const BLUE = "#2b4cff";
-const DIM = "#5a5a5e";
-const GREY_DOT = "#b8b8bc";
+// Screen-world palette (the canvas renders on the dark glass viewport).
+const SCREEN_INK = "#e8eaf2";
+const SCREEN_MUT = "#8a90a3";
+const BLUE_BRIGHT = "#6d86ff";
+const PILL_FILL = "#1a1e29";
+const PILL_STROKE = "rgba(255,255,255,0.14)";
+const PILL_FILL_DIM = "rgba(26,30,41,0.55)";
+const PILL_STROKE_DIM = "rgba(255,255,255,0.07)";
+
+/** Tracks the OS "reduce motion" preference so canvas particles calm down. */
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const apply = () => setReduced(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+  return reduced;
+}
 
 // Deterministic radial layout (graph units). Pools sit on a ring of POOL_RADIUS
 // around the pinned agent; dust fills a slightly larger disc so zoom-to-fit
@@ -124,6 +141,7 @@ export default function NetworkGraph({
   onSelect,
   chosenTxHash,
 }: Props) {
+  const reducedMotion = usePrefersReducedMotion();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -267,7 +285,7 @@ export default function NetworkGraph({
     const fg = fgRef.current;
     if (!fg) return;
     try {
-      fg.zoomToFit(500, 60);
+      fg.zoomToFit(500, 48);
     } catch {
       /* non-fatal if graph isn't ready */
     }
@@ -312,10 +330,10 @@ export default function NetworkGraph({
           // Links: chosen = solid blue, ineligible = faint dashed grey, others = soft ink.
           linkColor={(l: GraphLink) =>
             l.chosen
-              ? BLUE
+              ? BLUE_BRIGHT
               : l.eligible
-                ? "rgba(11,11,12,0.5)"
-                : "rgba(11,11,12,0.18)"
+                ? "rgba(232,234,242,0.30)"
+                : "rgba(232,234,242,0.10)"
           }
           linkWidth={(l: GraphLink) => (l.chosen ? 1.6 : 1)}
           linkLineDash={(l: GraphLink) =>
@@ -323,8 +341,8 @@ export default function NetworkGraph({
           }
           linkDirectionalParticles={(l: GraphLink) => (l.chosen ? 4 : 0)}
           linkDirectionalParticleWidth={(l: GraphLink) => (l.chosen ? 3 : 0)}
-          linkDirectionalParticleSpeed={scanning ? 0.012 : 0.006}
-          linkDirectionalParticleColor={() => BLUE}
+          linkDirectionalParticleSpeed={reducedMotion ? 0.002 : scanning ? 0.012 : 0.006}
+          linkDirectionalParticleColor={() => BLUE_BRIGHT}
           // After the engine cools down, zoom to fill the canvas.
           onEngineStop={zoomToFit}
           onNodeClick={(n: GraphNode) => {
@@ -368,7 +386,7 @@ export default function NetworkGraph({
             const y = n.y ?? 0;
 
             if (n.kind === "dust") {
-              ctx.fillStyle = "rgba(11,11,12,0.28)";
+              ctx.fillStyle = "rgba(232,234,242,0.12)";
               ctx.beginPath();
               ctx.arc(x, y, 0.7, 0, 2 * Math.PI);
               ctx.fill();
@@ -379,24 +397,24 @@ export default function NetworkGraph({
               // Concentric blue ring (matches .center .ring in the reference).
               ctx.beginPath();
               ctx.arc(x, y, 13, 0, 2 * Math.PI);
-              ctx.fillStyle = "rgba(43,76,255,0.06)";
+              ctx.fillStyle = "rgba(109,134,255,0.07)";
               ctx.fill();
               ctx.beginPath();
               ctx.arc(x, y, 8.5, 0, 2 * Math.PI);
-              ctx.fillStyle = "rgba(43,76,255,0.13)";
+              ctx.fillStyle = "rgba(109,134,255,0.16)";
               ctx.fill();
               ctx.beginPath();
               ctx.arc(x, y, 5, 0, 2 * Math.PI);
-              ctx.fillStyle = BLUE;
+              ctx.fillStyle = BLUE_BRIGHT;
               ctx.fill();
               // Label BELOW the ring — offset far enough to clear the ring.
               ctx.textAlign = "center";
               ctx.textBaseline = "top";
               ctx.font = "500 2.8px var(--font-plex-mono, monospace)";
-              ctx.fillStyle = "#9a9aa0";
+              ctx.fillStyle = SCREEN_MUT;
               ctx.fillText("YIELDSEEKER AGENT", x, y + 20);
               ctx.font = "700 3.8px var(--font-plex-mono, monospace)";
-              ctx.fillStyle = INK;
+              ctx.fillStyle = SCREEN_INK;
               ctx.fillText(n.label ?? "", x, y + 25);
               return;
             }
@@ -425,20 +443,23 @@ export default function NetworkGraph({
             // Soft shadow / glow for chosen / selected.
             if (isChosen || selected) {
               ctx.save();
-              ctx.shadowColor = "rgba(43,76,255,0.45)";
-              ctx.shadowBlur = 14;
+              ctx.shadowColor = "rgba(109,134,255,0.40)";
+              ctx.shadowBlur = 12;
               ctx.shadowOffsetY = 4;
             }
             roundRect(ctx, rectX, rectY, w, h, 4.5);
-            ctx.fillStyle = isDim ? DIM : INK;
+            ctx.fillStyle = isDim ? PILL_FILL_DIM : PILL_FILL;
             ctx.fill();
+            ctx.lineWidth = 0.5;
+            ctx.strokeStyle = isDim ? PILL_STROKE_DIM : PILL_STROKE;
+            ctx.stroke();
             if (isChosen || selected) ctx.restore();
 
             // Blue outline ring on chosen / selected.
             if (isChosen || selected) {
               roundRect(ctx, rectX - 0.7, rectY - 0.7, w + 1.4, h + 1.4, 5);
               ctx.lineWidth = 1;
-              ctx.strokeStyle = BLUE;
+              ctx.strokeStyle = BLUE_BRIGHT;
               ctx.stroke();
             } else if (isBestOnly) {
               // Subtle dotted outline: "this is where your money would go"
@@ -447,7 +468,7 @@ export default function NetworkGraph({
               ctx.setLineDash([2, 2.5]);
               roundRect(ctx, rectX - 0.6, rectY - 0.6, w + 1.2, h + 1.2, 5);
               ctx.lineWidth = 0.7;
-              ctx.strokeStyle = "rgba(43,76,255,0.42)";
+              ctx.strokeStyle = "rgba(109,134,255,0.55)";
               ctx.stroke();
               ctx.restore();
             }
@@ -463,15 +484,16 @@ export default function NetworkGraph({
               const bx = x - bw / 2;
               const by = rectY - bh - 3;
               ctx.save();
-              ctx.shadowColor = "rgba(43,76,255,0.5)";
+              ctx.shadowColor = "rgba(109,134,255,0.5)";
               ctx.shadowBlur = 8;
               roundRect(ctx, bx, by, bw, bh, 2.5);
-              ctx.fillStyle = BLUE;
+              ctx.fillStyle = BLUE_BRIGHT;
               ctx.fill();
               ctx.restore();
               ctx.textAlign = "center";
               ctx.textBaseline = "middle";
-              ctx.fillStyle = "#ffffff";
+              // Near-black on the luminous badge — white fails contrast here.
+              ctx.fillStyle = "#0c0e13";
               ctx.fillText(bText, x, by + bh / 2 + 0.2);
             }
 
@@ -487,11 +509,11 @@ export default function NetworkGraph({
                   if (ringElapsed <= 0 || ringElapsed >= 950) continue;
                   const frac = ringElapsed / 950;
                   const radius = 9 + frac * 26;
-                  const alpha = (1 - frac) * 0.52;
+                  const alpha = (1 - frac) * 0.45;
                   ctx.save();
                   ctx.beginPath();
                   ctx.arc(x, y, radius, 0, 2 * Math.PI);
-                  ctx.strokeStyle = `rgba(43,76,255,${alpha.toFixed(2)})`;
+                  ctx.strokeStyle = `rgba(109,134,255,${alpha.toFixed(2)})`;
                   ctx.lineWidth = 2.2 * (1 - frac * 0.65);
                   ctx.stroke();
                   ctx.restore();
@@ -505,19 +527,19 @@ export default function NetworkGraph({
             // Mark glyph: blue accent for chosen, slightly brighter for best-only
             // (helps the user spot the target pool before deploying).
             ctx.fillStyle = isChosen
-              ? "#9db0ff"
+              ? "#a9b8ff"
               : isBestOnly
-                ? "rgba(255,255,255,0.88)"
+                ? "rgba(232,234,242,0.9)"
                 : isDim
-                  ? "rgba(255,255,255,0.55)"
-                  : "#ffffff";
+                  ? "rgba(232,234,242,0.45)"
+                  : SCREEN_INK;
             ctx.fillText(mark, rectX + padX, y + 0.2);
             const markW = ctx.measureText(mark).width;
-            ctx.fillStyle = isDim ? "rgba(255,255,255,0.78)" : "#ffffff";
+            ctx.fillStyle = isDim ? "rgba(232,234,242,0.55)" : SCREEN_INK;
             ctx.fillText(n.label ?? "", rectX + padX + markW, y + 0.2);
 
             // Endpoint dot near the agent-facing side (below the pill centre).
-            const dotColor = isChosen ? BLUE : isDim ? GREY_DOT : INK;
+            const dotColor = isChosen ? BLUE_BRIGHT : isDim ? "rgba(232,234,242,0.35)" : SCREEN_INK;
             ctx.beginPath();
             ctx.arc(x, rectY + h + 2.5, 1.8, 0, 2 * Math.PI);
             ctx.fillStyle = dotColor;
@@ -525,7 +547,7 @@ export default function NetworkGraph({
             if (isChosen) {
               ctx.beginPath();
               ctx.arc(x, rectY + h + 2.5, 3.4, 0, 2 * Math.PI);
-              ctx.strokeStyle = "rgba(43,76,255,0.28)";
+              ctx.strokeStyle = "rgba(109,134,255,0.28)";
               ctx.lineWidth = 1.4;
               ctx.stroke();
             }
@@ -538,7 +560,7 @@ export default function NetworkGraph({
             if (isDim && pool.reason && globalScale > 1.1) {
               ctx.textAlign = "center";
               ctx.font = "400 2.4px var(--font-plex-mono, monospace)";
-              ctx.fillStyle = "#9a9aa0";
+              ctx.fillStyle = SCREEN_MUT;
               ctx.fillText(pool.reason, x, rectY + h + 7);
             }
 
