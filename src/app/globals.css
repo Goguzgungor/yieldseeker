@@ -1,12 +1,50 @@
+/* ── design tokens ─────────────────────────────────────────────────────────
+   Two worlds: "paper" (the instrument body — chrome, panels, controls) and
+   "screen" (the dark glass viewport the living network renders on). */
 :root {
-  --bg: #fbfbf9;
-  --ink: #0b0b0c;
-  --mut: #9a9aa0;
-  --line: #e2e2dd;
-  --chip: #efefea;
+  /* paper (chrome) */
+  --page: #efede6;
+  --paper: #faf9f5;
+  --paper-2: #f1efe9;
+  --ink: #141416;
+  --ink-2: #55555c;
+  --mut: #7d7d84;
+  --line: #e3e1d9;
+  --line-2: #cfcdc4;
+
+  /* screen (viewport) */
+  --screen: #0c0e13;
+  --screen-glass: rgba(20, 24, 36, 0.85);
+  --screen-line: rgba(255, 255, 255, 0.08);
+  --screen-line-2: rgba(255, 255, 255, 0.14);
+  --screen-ink: #e8eaf2;
+  --screen-mut: #8a90a3;
+
+  /* accent — brand blue on paper, luminous variant on the screen */
   --blue: #2b4cff;
-  --blue-soft: #2b4cff22;
-  --blue-faint: #2b4cff11;
+  --blue-soft: rgba(43, 76, 255, 0.14);
+  --blue-faint: rgba(43, 76, 255, 0.07);
+  --blue-bright: #6d86ff;
+  --blue-glow: rgba(109, 134, 255, 0.35);
+
+  /* semantic (paper / screen) */
+  --ok: #1f9d55;
+  --ok-bright: #34d17b;
+  --warn: #d08700;
+  --warn-bright: #f0a83c;
+  --err: #d23f3f;
+  --err-bright: #ef6a6a;
+
+  /* radii */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* legacy aliases — removed in the cleanup task once no inline style
+     references them anymore */
+  --bg: var(--paper);
+  --chip: var(--paper-2);
 }
 
 * {
@@ -18,7 +56,7 @@
 html,
 body {
   height: 100%;
-  background: var(--bg);
+  background: var(--page);
   color: var(--ink);
   font-family: var(--font-plex-mono), ui-monospace, "SFMono-Regular", monospace;
   -webkit-font-smoothing: antialiased;
@@ -33,10 +71,39 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+}
+
 input {
   font-family: inherit;
 }
 
 ::selection {
   background: var(--blue-soft);
+}
+
+/* Sentence-length prose reads in Plex Sans; mono stays for data/labels. */
+.ys-prose {
+  font-family: var(--font-plex-sans), system-ui, sans-serif;
+}
+
+/* ── accessibility ── */
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.ys-screen :focus-visible {
+  outline-color: var(--blue-bright);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
